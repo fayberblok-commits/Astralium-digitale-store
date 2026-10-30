@@ -55,6 +55,37 @@ admin, signing secret, S3-adapter placeholders, optional OpenAI). The store
 browses fine with **none** of them set; each integration switches on when
 its keys appear. The admin provider panel shows which are present.
 
+## Phase 1 — delivery foundation (Postgres + S3 + feature flags)
+
+Phase 1 adds the persistence/storage foundation the later phases build on,
+without changing the zero-config behavior above:
+
+- **Prisma + PostgreSQL** (`prisma/schema.prisma`): Product, Order,
+  OrderItem, DeliveryAttempt, Setting, FeatureFlag, DownloadGrant,
+  ConsentRecord. All access goes through `src/lib/db.ts`, which returns
+  `null` when `DATABASE_URL` is unset — the store keeps running on the
+  file catalog. Apply with `npx prisma db push` (or the committed
+  migration in `prisma/migrations/`), then seed the catalog rows with
+  `npm run sync-catalog`.
+- **S3 storage adapter** (`src/services/storage.ts`): hand-rolled SigV4
+  (no SDK) — presigned PUT for admin uploads, presigned GET for
+  15-minute download redirects, signed HEAD for existence checks. Works
+  with AWS S3 and S3-compatible endpoints (R2, MinIO…) via `S3_ENDPOINT`
+  and `S3_FORCE_PATH_STYLE`.
+- **Admin product files**: the dashboard's "Product files" section
+  uploads each product's deliverable browser → S3 (presign → PUT →
+  confirm) and binds it as `Product.fileKey` (or the local
+  `.data/file-bindings.json` when no DB is configured). Downloads then
+  302-redirect to a presigned URL; unbound products keep the generated
+  licensed deliverable.
+- **Feature flags** (`src/lib/flags.ts`): every later capability sits
+  behind a flag persisted in the FeatureFlag table. Defaults: email
+  delivery on, everything else (WhatsApp/Messenger/Instagram delivery,
+  social proof, AI support v2, subscriptions, loyalty, referrals) off.
+  Without a DB, admin toggles are session previews and say so.
+- Verify the whole core path against local Postgres + MinIO with
+  `npm run verify:phase1` — see `docs/PHASE1_REPORT.md`.
+
 ## What's where
 
 | Area | Location |

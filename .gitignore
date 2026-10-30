@@ -5,3 +5,6 @@ out
 .env
 *.log
 .DS_Store
+
+# Phase 1 local file-binding persistence (dev only)
+.data/

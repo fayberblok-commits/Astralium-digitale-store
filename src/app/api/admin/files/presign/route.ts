@@ -1,0 +1,58 @@
+import { NextRequest, NextResponse } from "next/server";
+import { ADMIN_COOKIE, isAdminSession } from "../../../../../lib/admin";
+import { getProductById } from "../../../../../data/products";
+import { ALLOWED_EXTENSIONS, MAX_DECLARED_BYTES, sanitizeFilename } from "../../../../../lib/uploads";
+import {
+  isStorageConfigured,
+  presignPut,
+  productFileKey,
+  previewFileKey,
+} from "../../../../../services/storage";
+
+export const runtime = "nodejs";
+
+/**
+ * Step 1 of the admin upload flow: mint a presigned PUT URL so the browser
+ * uploads the file directly to S3. Nothing touches this server but JSON.
+ */
+export async function POST(req: NextRequest) {
+  if (!isAdminSession(req.cookies.get(ADMIN_COOKIE)?.value)) {
+    return NextResponse.json({ error: "ADMIN_UNAUTHORIZED" }, { status: 401 });
+  }
+  if (!isStorageConfigured()) {
+    return NextResponse.json({ error: "STORAGE_NOT_CONFIGURED" }, { status: 503 });
+  }
+  const body = (await req.json().catch(() => null)) as {
+    productId?: string;
+    filename?: string;
+    contentType?: string;
+    kind?: string;
+    sizeBytes?: number;
+  } | null;
+  if (!body?.productId || !body?.filename || (body.kind !== "product" && body.kind !== "preview")) {
+    return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
+  }
+  const product = getProductById(body.productId);
+  if (!product) {
+    return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 404 });
+  }
+  if (typeof body.sizeBytes === "number" && body.sizeBytes > MAX_DECLARED_BYTES) {
+    return NextResponse.json({ error: "FILE_TOO_LARGE", maxBytes: MAX_DECLARED_BYTES }, { status: 413 });
+  }
+  const filename = sanitizeFilename(body.filename);
+  if (!filename) {
+    return NextResponse.json(
+      { error: "INVALID_FILENAME", allowedExtensions: ALLOWED_EXTENSIONS },
+      { status: 400 },
+    );
+  }
+  const fileKey =
+    body.kind === "preview"
+      ? previewFileKey(product.id, filename)
+      : productFileKey(product.id, filename);
+  const uploadUrl = presignPut(fileKey, body.contentType, 3600);
+  if (!uploadUrl) {
+    return NextResponse.json({ error: "STORAGE_NOT_CONFIGURED" }, { status: 503 });
+  }
+  return NextResponse.json({ uploadUrl, fileKey, expiresIn: 3600 });
+}

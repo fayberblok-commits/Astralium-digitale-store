@@ -3,6 +3,11 @@ import { redirect } from "next/navigation";
 import { ADMIN_COOKIE, isAdminSession, providerStatus } from "../../../lib/admin";
 import { PRODUCTS, BUNDLES } from "../../../data/products";
 import { COUPONS } from "../../../lib/coupons";
+import { getDictionary } from "../../../i18n/dictionaries";
+import { isStorageConfigured } from "../../../services/storage";
+import { isDbConfigured } from "../../../lib/db";
+import ProductFilesManager from "../../../components/ProductFilesManager";
+import FeatureFlagsPanel from "../../../components/FeatureFlagsPanel";
 
 export const metadata = { title: "Control", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -14,6 +19,9 @@ export default async function AdminDashboard({ params }: { params: Promise<{ loc
     redirect(`/${locale}/control-astralium/login`);
   }
   const status = providerStatus();
+  const dict = getDictionary(locale);
+  const storageOn = isStorageConfigured();
+  const dbOn = isDbConfigured();
   const catalogValue = PRODUCTS.reduce((s, p) => s + p.priceUSD, 0);
   const avgRating = (PRODUCTS.reduce((s, p) => s + p.rating, 0) / PRODUCTS.length).toFixed(2);
 
@@ -85,6 +93,54 @@ export default async function AdminDashboard({ params }: { params: Promise<{ loc
             ))}
           </tbody>
         </table>
+      </div>
+
+      <h2>{dict.admin_files_title}</h2>
+      <div className="panel">
+        <p className="muted">{dict.admin_files_desc}</p>
+        {!storageOn ? <p><span className="pill pill-bad">{dict.admin_files_storage_off}</span></p> : null}
+        {!dbOn ? <p><span className="pill pill-bad">{dict.admin_files_db_off}</span></p> : null}
+        <ProductFilesManager
+          products={PRODUCTS.map((p) => ({ id: p.id, title: p.title }))}
+          storageConfigured={storageOn}
+          dict={{
+            product: dict.admin_files_product,
+            status: dict.admin_files_status,
+            action: dict.admin_files_action,
+            bound: dict.admin_files_bound,
+            unbound: dict.admin_files_unbound,
+            kindProduct: dict.admin_files_kind_product,
+            kindPreview: dict.admin_files_kind_preview,
+            version: dict.admin_files_version,
+            upload: dict.admin_files_upload,
+            uploading: dict.admin_files_uploading,
+            done: dict.admin_files_done,
+            error: dict.admin_files_error,
+          }}
+        />
+      </div>
+
+      <h2>{dict.admin_flags_title}</h2>
+      <div className="panel">
+        <p className="muted">{dict.admin_flags_desc}</p>
+        {!dbOn ? <p><span className="pill pill-bad">{dict.admin_flags_preview_note}</span></p> : null}
+        <FeatureFlagsPanel
+          dict={{
+            on: dict.admin_flags_on,
+            off: dict.admin_flags_off,
+            labels: {
+              delivery_email: dict.flag_delivery_email,
+              delivery_whatsapp: dict.flag_delivery_whatsapp,
+              delivery_messenger: dict.flag_delivery_messenger,
+              delivery_instagram: dict.flag_delivery_instagram,
+              social_proof: dict.flag_social_proof,
+              ai_support_v2: dict.flag_ai_support_v2,
+              subscriptions: dict.flag_subscriptions,
+              loyalty: dict.flag_loyalty,
+              referrals: dict.flag_referrals,
+            },
+          }}
+        />
       </div>
 
       <h2>Settings overview</h2>

@@ -1,0 +1,120 @@
+// Astralium Digitale Store — Phase 1 persistence layer.
+//
+// The storefront still renders from the typed file catalog (src/data/products.ts)
+// with zero infrastructure. This schema is the system of record for orders,
+// delivery, settings/feature flags and download grants once DATABASE_URL is
+// set. Every DB access in app code goes through src/lib/db.ts, which no-ops
+// gracefully when DATABASE_URL is absent — the store never hard-depends on it.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id         String   @id
+  slug       String   @unique
+  title      String
+  priceUSD   Float
+  /// S3 object key of the deliverable file, e.g. products/<id>/<file>.pdf
+  fileKey    String?
+  /// S3 object key of the free preview asset.
+  previewKey String?
+  version    String   @default("1.0.0")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  orderItems    OrderItem[]
+  downloadGrants DownloadGrant[]
+}
+
+model Order {
+  id          String   @id @default(cuid())
+  email       String
+  status      String   @default("pending") // pending | paid | fulfilled | refunded | failed
+  totalUSD    Float
+  currency    String   @default("USD")
+  provider    String // stripe | paypal
+  providerRef String   @unique // provider session/order id — idempotency anchor
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items           OrderItem[]
+  deliveryAttempts DeliveryAttempt[]
+  downloadGrants  DownloadGrant[]
+}
+
+model OrderItem {
+  id        String @id @default(cuid())
+  orderId   String
+  productId String
+  priceUSD  Float
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model DeliveryAttempt {
+  id             String   @id @default(cuid())
+  orderId        String
+  channel        String // email | whatsapp | messenger | instagram
+  status         String // queued | sent | delivered | read | failed
+  /// Provider error code only — never message bodies or recipient secrets.
+  errorCode      String?
+  idempotencyKey String   @unique
+  createdAt      DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([channel, status])
+}
+
+model Setting {
+  key   String @id
+  value Json
+}
+
+model FeatureFlag {
+  key     String  @id
+  enabled Boolean @default(false)
+  config  Json?
+}
+
+model DownloadGrant {
+  id             String    @id @default(cuid())
+  orderId        String
+  productId      String
+  /// SHA-256 hash of the raw download token — the token itself is never stored.
+  tokenHash      String    @unique
+  maxDownloads   Int       @default(5)
+  downloadsCount Int       @default(0)
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model ConsentRecord {
+  id          String   @id @default(cuid())
+  /// SHA-256 hash of the subject identifier (email/phone) — raw PII is not stored here.
+  subjectHash String
+  channel     String // email | whatsapp | messenger | instagram | push
+  granted     Boolean
+  createdAt   DateTime @default(now())
+
+  @@index([subjectHash])
+}

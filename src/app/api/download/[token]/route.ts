@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyDownloadToken } from "../../../../lib/tokens";
 import { getProductById } from "../../../../data/products";
+import { getBinding } from "../../../../lib/bindings";
+import { isStorageConfigured, presignGet } from "../../../../services/storage";
 
 export const runtime = "nodejs";
 
 /**
- * Token-gated download. Verifies the HMAC signature + expiry, then streams
- * a generated deliverable for the product. In production the bytes come
- * from the S3 storage adapter; in this release the deliverable is the
- * product's licensed sample package (text), generated deterministically.
- * Download counts (`max` in the token) are enforced by the DB adapter
- * phase — the token itself carries the cap (see docs/LIMITATIONS.md).
+ * Token-gated download. Verifies the HMAC signature + expiry, then resolves
+ * the product's file binding (DB Product.fileKey → local .data store →
+ * catalog): when a real file is bound and storage is configured, the buyer
+ * is 302-redirected to a 15-minute presigned S3 GET URL — raw storage URLs
+ * are never handed out. Otherwise it falls back to the generated licensed
+ * deliverable (the pipeline proof used before product files are uploaded).
+ * Expiry and the download cap (`max`) travel inside the signed token.
  */
 export async function GET(
   _req: NextRequest,
@@ -24,6 +27,23 @@ export async function GET(
   const product = getProductById(result.payload.pid);
   if (!product) {
     return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 404 });
+  }
+  // Real file bound? Redirect to a short-lived presigned URL.
+  if (isStorageConfigured()) {
+    try {
+      const binding = await getBinding(product.id);
+      if (binding?.fileKey) {
+        const url = presignGet(binding.fileKey, 900);
+        if (url) {
+          return NextResponse.redirect(url, {
+            status: 302,
+            headers: { "Cache-Control": "private, no-store", "X-Order-Id": result.payload.oid },
+          });
+        }
+      }
+    } catch {
+      // Binding lookup must never break delivery — fall through to fallback.
+    }
   }
   const expiresISO = new Date(result.payload.exp * 1000).toISOString();
   const content = [

@@ -127,6 +127,40 @@ const en: Dict = {
   theme_dark: "Dark",
   free_returns_note: "14-day money-back guarantee · Secure checkout · Instant delivery",
   account_note_email: "Signed downloads are always re-issued free from this page.",
+  // ── Admin: product files (Phase 1) ──
+  admin_files_title: "Product files",
+  admin_files_desc: "Upload each product's deliverable to private storage and bind it here. Files upload directly from your browser to S3 — they never pass through this server.",
+  admin_files_product: "Product",
+  admin_files_status: "File status",
+  admin_files_action: "Upload",
+  admin_files_bound: "Bound",
+  admin_files_unbound: "No file bound",
+  admin_files_kind_product: "Deliverable",
+  admin_files_kind_preview: "Preview",
+  admin_files_version: "Version",
+  admin_files_choose: "Choose file",
+  admin_files_upload: "Upload & bind",
+  admin_files_uploading: "Uploading…",
+  admin_files_done: "Bound successfully",
+  admin_files_error: "Upload failed",
+  admin_files_storage_off: "Storage is not configured (set S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY) — uploads are disabled.",
+  admin_files_db_off: "No database configured — bindings persist to a local file on this server (.data/file-bindings.json). Set DATABASE_URL for production persistence.",
+  // ── Admin: feature flags (Phase 1) ──
+  admin_flags_title: "Feature flags",
+  admin_flags_desc: "Capabilities ship behind these switches. Messaging and money features stay off until you enable them.",
+  admin_flags_on: "On",
+  admin_flags_off: "Off",
+  admin_flags_preview_note: "No database configured — toggles are a session preview only and are NOT saved. Set DATABASE_URL to persist them.",
+  admin_flags_saved: "Saved",
+  flag_delivery_email: "Email delivery",
+  flag_delivery_whatsapp: "WhatsApp delivery",
+  flag_delivery_messenger: "Messenger delivery",
+  flag_delivery_instagram: "Instagram delivery",
+  flag_social_proof: "Social proof",
+  flag_ai_support_v2: "AI support v2",
+  flag_subscriptions: "Subscriptions",
+  flag_loyalty: "Loyalty points",
+  flag_referrals: "Referral program",
 };
 
 const ar: Dict = {
@@ -249,6 +283,40 @@ const ar: Dict = {
   theme_dark: "داكن",
   free_returns_note: "ضمان استرداد 14 يوماً · دفع آمن · تسليم فوري",
   account_note_email: "تُعاد إصدار روابط التحميل الموقّعة مجاناً من هذه الصفحة دائماً.",
+  // ── الإدارة: ملفات المنتجات (المرحلة 1) ──
+  admin_files_title: "ملفات المنتجات",
+  admin_files_desc: "ارفع ملف كل منتج إلى التخزين الخاص واربطه هنا. تُرفع الملفات من متصفحك مباشرة إلى S3 — ولا تمر عبر هذا الخادم أبداً.",
+  admin_files_product: "المنتج",
+  admin_files_status: "حالة الملف",
+  admin_files_action: "الرفع",
+  admin_files_bound: "مرتبط",
+  admin_files_unbound: "لا يوجد ملف مرتبط",
+  admin_files_kind_product: "الملف المُسلَّم",
+  admin_files_kind_preview: "المعاينة",
+  admin_files_version: "الإصدار",
+  admin_files_choose: "اختر ملفاً",
+  admin_files_upload: "ارفع واربط",
+  admin_files_uploading: "جارٍ الرفع…",
+  admin_files_done: "تم الربط بنجاح",
+  admin_files_error: "فشل الرفع",
+  admin_files_storage_off: "التخزين غير مُهيأ (عيّن S3_BUCKET وS3_ACCESS_KEY_ID وS3_SECRET_ACCESS_KEY) — الرفع معطّل.",
+  admin_files_db_off: "لا توجد قاعدة بيانات مُهيأة — تُحفظ الروابط في ملف محلي على هذا الخادم (.data/file-bindings.json). عيّن DATABASE_URL للحفظ الدائم في الإنتاج.",
+  // ── الإدارة: مفاتيح الميزات (المرحلة 1) ──
+  admin_flags_title: "مفاتيح الميزات",
+  admin_flags_desc: "تصل القدرات الجديدة خلف هذه المفاتيح. ميزات المراسلة والمال تبقى مغلقة حتى تفعّلها أنت.",
+  admin_flags_on: "مفعّل",
+  admin_flags_off: "معطّل",
+  admin_flags_preview_note: "لا توجد قاعدة بيانات مُهيأة — المفاتيح معاينة للجلسة فقط ولا تُحفظ. عيّن DATABASE_URL لحفظها.",
+  admin_flags_saved: "تم الحفظ",
+  flag_delivery_email: "التسليم بالبريد",
+  flag_delivery_whatsapp: "التسليم عبر واتساب",
+  flag_delivery_messenger: "التسليم عبر ماسنجر",
+  flag_delivery_instagram: "التسليم عبر إنستغرام",
+  flag_social_proof: "دليل الثقة الاجتماعي",
+  flag_ai_support_v2: "مساعد الذكاء الاصطناعي 2",
+  flag_subscriptions: "الاشتراكات",
+  flag_loyalty: "نقاط الولاء",
+  flag_referrals: "برنامج الإحالة",
 };
 
 const fr: Dict = {
@@ -313,3 +381,6 @@ export function getDictionary(locale: string): Dict {
 }
 
 export { en as EN_DICT };
+
+/** Native (non-fallback) dictionaries by locale — used by scripts/check-i18n.mjs. */
+export const NATIVE_DICTS: Record<string, Dict> = { en, ...PARTIALS };

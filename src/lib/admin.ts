@@ -44,6 +44,8 @@ export function providerStatus(): { name: string; ready: boolean; missing: strin
     missing: keys.filter((k) => !has(k)),
   });
   return [
+    group("Database (PostgreSQL)", ["DATABASE_URL"]),
+    group("File storage (S3)", ["S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"]),
     group("Stripe", ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"]),
     group("PayPal", ["PAYPAL_CLIENT_ID", "PAYPAL_CLIENT_SECRET", "PAYPAL_WEBHOOK_ID"]),
     group("Email (Resend)", ["RESEND_API_KEY", "EMAIL_FROM"]),
