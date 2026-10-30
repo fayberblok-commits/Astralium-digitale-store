@@ -39,6 +39,13 @@ export interface Product {
   /** hue (0-360) used by the CSS-generated cover art */
   hue: number;
   publishedAt: string; // ISO date — drives "new releases" sort
+  /** Primary language of the product content (ISO code). Default "en". */
+  language?: string;
+}
+
+/** The product's content language, defaulting to English. */
+export function productLanguage(p: Product): string {
+  return p.language ?? "en";
 }
 
 export interface Bundle {
@@ -245,6 +252,7 @@ export const PRODUCTS: Product[] = [
       "Lesson 1 — At the café. You will learn to order, ask for the bill and handle the three follow-up questions baristas actually ask, at slow speed first, then at street speed.",
     hue: 350,
     publishedAt: "2026-03-15",
+    language: "fr",
   },
   {
     id: "p09",

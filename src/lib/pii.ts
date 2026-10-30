@@ -150,3 +150,19 @@ export async function findSubjectByHash(subjectHash: string, channel: string): P
 export function __resetMemoryConsent(): void {
   memoryConsent.length = 0;
 }
+
+/**
+ * Privacy deletion (Phase 6): drop every in-memory consent entry for a
+ * subject hash. The DB rows are deleted by lib/privacy.ts directly;
+ * this covers the zero-DB mirror.
+ */
+export function deleteMemoryConsentFor(subjectHash: string): number {
+  let removed = 0;
+  for (let i = memoryConsent.length - 1; i >= 0; i--) {
+    if (memoryConsent[i].subjectHash === subjectHash) {
+      memoryConsent.splice(i, 1);
+      removed++;
+    }
+  }
+  return removed;
+}

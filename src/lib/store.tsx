@@ -76,6 +76,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const add = useCallback((item: CartItem) => {
     setCart((c) => (c.some((i) => i.id === item.id) ? c : [...c, item])); // one license per product
+    // Phase 6, feature 27: first-party analytics (no-op unless the
+    // analytics beacon is mounted, i.e. the flag is on).
+    void import("./track-client").then((m) => m.track("add_to_cart", { productId: item.id })).catch(() => undefined);
   }, []);
   const remove = useCallback((id: string) => setCart((c) => c.filter((i) => i.id !== id)), []);
   const clear = useCallback(() => setCart([]), []);

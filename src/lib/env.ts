@@ -83,6 +83,10 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): EnvCheck {
   if (present("PII_ENCRYPTION_KEY") && env.PII_ENCRYPTION_KEY!.length < 16) {
     warnings.push("PII_ENCRYPTION_KEY is shorter than 16 characters — phone encryption for delivery stays disabled.");
   }
+  // ── Phase 5: watermark fetch cap format hint ────────────────────────────
+  if (present("WATERMARK_MAX_MB") && !(Number(env.WATERMARK_MAX_MB) > 0)) {
+    warnings.push("WATERMARK_MAX_MB is not a positive number — the 50 MB default applies.");
+  }
 
   const on = (label: string, ok: boolean) => `${ok ? "on " : "off"}  ${label}`;
   const summary = [
