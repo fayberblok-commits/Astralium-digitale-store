@@ -4,6 +4,11 @@ import { createRefToken, issueClaimCode } from "../../../lib/claim-codes";
 import { channelAvailability } from "../../../services/delivery";
 import DeliveryOptions, { type DeliveryLinks } from "../../../components/DeliveryOptions";
 import MarkPaid from "../../../components/MarkPaid";
+import AbBeacon from "../../../components/AbBeacon";
+import TrackEvent from "../../../components/TrackEvent";
+import UpsellOffer from "../../../components/UpsellOffer";
+import { currentCurrency } from "../../../lib/server";
+import { getFlag } from "../../../lib/flags";
 
 export const dynamic = "force-dynamic";
 
@@ -66,7 +71,34 @@ export default async function SuccessPage({
             ))}
           </div>
           <DeliveryOptions dict={dict} sessionId={sp.session_id} claimCode={claimCode} links={deliveryLinks} />
+          {/* Phase 4, feature 16: PDF receipt for the verified order —
+              the endpoint re-verifies the Stripe session server-side. */}
+          {sp.session_id && (await getFlag("receipts")) && (
+            <p style={{ marginTop: 14 }}>
+              <a
+                href={`/api/receipt/${encodeURIComponent(verified.orderId)}?session_id=${encodeURIComponent(sp.session_id)}`}
+                className="btn btn-ghost"
+              >
+                🧾 {dict.receipt_download}
+              </a>
+            </p>
+          )}
+          {verified.email && (
+            <UpsellOffer
+              locale={locale}
+              dict={dict}
+              currency={await currentCurrency(locale)}
+              orderId={verified.orderId}
+              email={verified.email}
+              purchasedProductIds={verified.productIds}
+            />
+          )}
           {sp.session_id && <MarkPaid providerRef={sp.session_id} />}
+          {/* Phase 6, feature 27: a purchase event fires ONLY on a server-verified payment. */}
+          {verified && <TrackEvent type="purchase" />}
+          {/* Phase 5, feature 23: a verified payment is the A/B
+              conversion event (anonymous; the server buckets it). */}
+          {(await getFlag("ab_tests")) && <AbBeacon mode="conversion" />}
         </>
       ) : (
         <p className="muted">{dict.success_pending}</p>

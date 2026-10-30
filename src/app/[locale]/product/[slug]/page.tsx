@@ -11,6 +11,14 @@ import { formatPrice } from "../../../../lib/currency";
 import Cover from "../../../../components/Cover";
 import ProductCard, { Stars } from "../../../../components/ProductCard";
 import { AddToCartButton } from "../../../../components/Buttons";
+import RecommendationsRail from "../../../../components/RecommendationsRail";
+import ReviewsSection from "../../../../components/ReviewsSection";
+import RecordView from "../../../../components/RecordView";
+import ProductCommerce from "../../../../components/ProductCommerce";
+import { isAudioProduct } from "../../../../lib/preview";
+import { getFlag } from "../../../../lib/flags";
+import { aggregateReviews, listReviews } from "../../../../lib/reviews";
+import { buildBreadcrumbJsonLd, buildProductJsonLd } from "../../../../lib/seo";
 
 export function generateStaticParams() {
   return LOCALE_CODES.flatMap((locale) => PRODUCTS.map((p) => ({ locale, slug: p.slug })));
@@ -21,10 +29,20 @@ export async function generateMetadata({
 }: {
   params: Promise<{ locale: string; slug: string }>;
 }): Promise<Metadata> {
-  const { slug } = await params;
+  const { locale, slug } = await params;
   const product = getProductBySlug(slug);
   if (!product) return {};
-  return { title: product.title, description: product.description.slice(0, 155) };
+  const description = product.description.slice(0, 155);
+  const url = `${siteUrl()}/${locale}/product/${product.slug}`;
+  return {
+    title: product.title,
+    description,
+    alternates: { canonical: `/${locale}/product/${product.slug}` },
+    // The per-product OG image comes from the opengraph-image.tsx
+    // convention in this segment (Phase 5, SEO engine).
+    openGraph: { title: product.title, description, type: "website", url },
+    twitter: { card: "summary_large_image", title: product.title, description },
+  };
 }
 
 export default async function ProductPage({
@@ -45,29 +63,32 @@ export default async function ProductPage({
     title: product.title, priceUSD: product.priceUSD, hue: product.hue,
   };
 
-  const jsonLd = {
-    "@context": "https://schema.org",
-    "@type": "Product",
-    name: product.title,
-    description: product.description,
-    url: `${siteUrl()}/${locale}/product/${product.slug}`,
-    category: product.category,
-    aggregateRating: {
-      "@type": "AggregateRating",
-      ratingValue: product.rating,
-      reviewCount: product.reviewsCount,
-    },
-    offers: {
-      "@type": "Offer",
-      priceCurrency: "USD",
-      price: product.priceUSD.toFixed(2),
-      availability: "https://schema.org/InStock",
-    },
-  };
+  // JSON-LD (Phase 5, SEO engine): Product + Offer carry real catalog
+  // data; AggregateRating is emitted ONLY from real APPROVED reviews
+  // (Phase 3 store) — with none approved, the block is omitted instead
+  // of being filled from the catalog's illustrative seed ratings.
+  const approvedReviews = (await getFlag("reviews")) ? await listReviews(product.id, "approved") : [];
+  const reviewAgg = aggregateReviews(approvedReviews);
+  const jsonLd = buildProductJsonLd({
+    product,
+    locale,
+    siteBase: siteUrl(),
+    reviewAgg: reviewAgg.count > 0 ? reviewAgg : null,
+  });
+  const breadcrumbLd = buildBreadcrumbJsonLd({
+    siteBase: siteUrl(),
+    locale,
+    trail: [
+      { name: dict.nav_home, path: "" },
+      { name: dict.nav_shop, path: "/shop" },
+      { name: product.title, path: `/product/${product.slug}` },
+    ],
+  });
 
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd) }} />
       <div className="product-layout">
         <div>
           <Cover title={product.title} category={product.category} hue={product.hue} size="lg" />
@@ -95,6 +116,15 @@ export default async function ProductPage({
             big
           />
           <p className="muted">{dict.free_returns_note}</p>
+          {/* Phase 4: flash-sale price/countdown, pre-order badge, PWYW
+              tiers, subscription — renders only what is flag-on and
+              configured for this product (server-computed state). */}
+          <ProductCommerce
+            product={{ id: product.id, slug: product.slug, title: product.title, priceUSD: product.priceUSD, hue: product.hue }}
+            locale={locale}
+            dict={dict}
+            currency={currency}
+          />
 
           <h2>{dict.includes_t}</h2>
           <ul className="includes">
@@ -119,8 +149,38 @@ export default async function ProductPage({
 
       <section className="section">
         <h2>{dict.preview_t}</h2>
-        <div className="preview-box"><p style={{ margin: 0 }}>{product.preview}</p></div>
+        <div className="preview-box">
+          <p style={{ marginTop: 0 }}>{product.preview}</p>
+          {isAudioProduct(product) ? (
+            <>
+              <p><strong>{dict.preview_listen}</strong></p>
+              <audio controls preload="none" src={`/api/preview/${product.id}`} style={{ width: "100%" }} aria-label={dict.preview_listen} />
+            </>
+          ) : (
+            <iframe
+              src={`/api/preview/${product.id}`}
+              title={dict.preview_open}
+              style={{ width: "100%", minHeight: 240, border: "1px solid var(--line)" }}
+              loading="lazy"
+            />
+          )}
+          <p style={{ marginBottom: 0 }}>
+            <a href={`/api/preview/${product.id}`} target="_blank" rel="noreferrer" className="btn">{dict.preview_open}</a>
+          </p>
+        </div>
         <p className="muted" style={{ marginTop: 18 }}>{product.description}</p>
+
+        <h3>{dict.preview_structure}</h3>
+        <table className="format-table">
+          <tbody>
+            {product.formats.map((f) => (
+              <tr key={f.format}>
+                <td>{f.format}</td>
+                <td>{f.sizeMB >= 1000 ? `${(f.sizeMB / 1000).toFixed(1)} GB` : `${f.sizeMB} MB`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </section>
 
       {bundle && (
@@ -153,6 +213,17 @@ export default async function ProductPage({
           ))}
         </div>
       </section>
+
+      <ReviewsSection productId={product.id} productTitle={product.title} dict={dict} />
+
+      <RecommendationsRail
+        locale={locale}
+        dict={dict}
+        currency={currency}
+        productId={product.id}
+        excludeIds={[product.id, ...related.map((p) => p.id)]}
+      />
+      <RecordView slug={product.slug} productId={product.id} />
 
       <div className="sticky-buybar">
         <span className="sb-title">{product.title}</span>
