@@ -4,6 +4,9 @@ import type { Dict } from "../i18n/dictionaries";
 import { useStore } from "../lib/store";
 import { PRODUCTS, getProductBySlug } from "../data/products";
 import ProductCard from "./ProductCard";
+import LibrarySection from "./LibrarySection";
+import WishlistExtras from "./WishlistExtras";
+import ReferralPanel from "./ReferralPanel";
 
 export default function AccountClient({ locale, dict, currency }: { locale: string; dict: Dict; currency: string }) {
   const { orders, wishlist } = useStore();
@@ -47,16 +50,21 @@ export default function AccountClient({ locale, dict, currency }: { locale: stri
           ))
         )}
       </section>
+      <LibrarySection locale={locale} dict={dict} />
+      <ReferralPanel locale={locale} dict={dict} currency={currency} />
       <section className="section">
         <h2>{dict.wishlist_t}</h2>
         {wishedProducts.length === 0 ? (
           <p className="empty-note">{dict.wishlist_empty}</p>
         ) : (
-          <div className="grid">
-            {wishedProducts.map((p) => (
-              <ProductCard key={p.id} product={getProductBySlug(p.slug)!} locale={locale} dict={dict} currency={currency} />
-            ))}
-          </div>
+          <>
+            <div className="grid">
+              {wishedProducts.map((p) => (
+                <ProductCard key={p.id} product={getProductBySlug(p.slug)!} locale={locale} dict={dict} currency={currency} />
+              ))}
+            </div>
+            <WishlistExtras locale={locale} dict={dict} wishlistSlugs={wishlist} />
+          </>
         )}
       </section>
     </>
