@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ADMIN_COOKIE, isAdminSession } from "../../../../lib/admin";
+import { requireAdmin } from "../../../../lib/team";
 import { channelAvailability } from "../../../../services/delivery";
 import { channelStats, listAttempts } from "../../../../services/delivery/attempts";
 import { whatsappTemplateName } from "../../../../services/delivery/whatsapp";
@@ -12,9 +12,8 @@ export const runtime = "nodejs";
  * status, channel stats, and the latest delivery attempts.
  */
 export async function GET(req: NextRequest) {
-  if (!isAdminSession(req.cookies.get(ADMIN_COOKIE)?.value)) {
-    return NextResponse.json({ error: "ADMIN_UNAUTHORIZED" }, { status: 401 });
-  }
+  const auth = await requireAdmin(req, "read");
+  if ("error" in auth) return auth.error;
   const [channels, stats, attempts] = await Promise.all([
     channelAvailability(),
     channelStats(),

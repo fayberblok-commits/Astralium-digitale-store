@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ADMIN_COOKIE, isAdminSession } from "../../../../../lib/admin";
+import { requireAdmin } from "../../../../../lib/team";
 import { getDb } from "../../../../../lib/db";
 import { deliverOrder } from "../../../../../services/delivery";
 import type { DeliveryChannelKey } from "../../../../../services/delivery/types";
@@ -16,9 +16,8 @@ const CHANNEL_SET = new Set(["email", "whatsapp", "messenger", "instagram"]);
  * when neither is available we say so instead of pretending to resend.
  */
 export async function POST(req: NextRequest) {
-  if (!isAdminSession(req.cookies.get(ADMIN_COOKIE)?.value)) {
-    return NextResponse.json({ error: "ADMIN_UNAUTHORIZED" }, { status: 401 });
-  }
+  const auth = await requireAdmin(req, "support_ops");
+  if ("error" in auth) return auth.error;
   const body = (await req.json().catch(() => null)) as {
     orderId?: string;
     channel?: string;
