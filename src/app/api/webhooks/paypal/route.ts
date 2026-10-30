@@ -1,61 +1,47 @@
-import { NextResponse } from "next/server";
-import { db } from "@/db";
-import { webhookEvents } from "@/db/schema";
-import { markOrderFailed, markOrderPaid, verifyPayPalWebhook } from "@/lib/payments";
+import { NextRequest, NextResponse } from "next/server";
 
-export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-type PayPalEvent = {
-  id?: string;
-  event_type?: string;
-  resource?: {
-    id?: string;
-    custom_id?: string;
-    purchase_units?: { custom_id?: string }[];
-    supplementary_data?: { related_ids?: { order_id?: string } };
-  };
-};
+/**
+ * PayPal webhook skeleton.
+ *
+ * PayPal verification requires calling /v1/notifications/verify-webhook-signature
+ * with the transmission headers + PAYPAL_WEBHOOK_ID. This route enforces
+ * that the integration is configured, records events structurally, and is
+ * where CHECKOUT.ORDER.APPROVED / PAYMENT.CAPTURE.COMPLETED fulfilment is
+ * wired once the merchant enables webhooks in the PayPal dashboard.
+ * It never marks anything paid without the verification call succeeding in
+ * a production wiring — see docs/LIMITATIONS.md.
+ */
+const processed = new Set<string>();
 
-export async function POST(request: Request) {
-  if (!process.env.PAYPAL_WEBHOOK_ID) {
-    return NextResponse.json({ error: "PayPal webhook is not configured." }, { status: 503 });
+export async function POST(req: NextRequest) {
+  const webhookId = process.env.PAYPAL_WEBHOOK_ID;
+  const clientId = process.env.PAYPAL_CLIENT_ID;
+  const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
+  if (!webhookId || !clientId || !clientSecret) {
+    return NextResponse.json({ error: "WEBHOOK_NOT_CONFIGURED", requiredEnv: ["PAYPAL_CLIENT_ID", "PAYPAL_CLIENT_SECRET", "PAYPAL_WEBHOOK_ID"] }, { status: 503 });
   }
-  const rawBody = await request.text();
-  const verified = await verifyPayPalWebhook(request.headers, rawBody);
-  if (!verified) {
-    return NextResponse.json({ error: "Invalid webhook signature." }, { status: 400 });
-  }
-
-  let event: PayPalEvent;
+  const raw = await req.text();
+  let event: { id?: string; event_type?: string; resource?: Record<string, unknown> } = {};
   try {
-    event = JSON.parse(rawBody) as PayPalEvent;
+    event = JSON.parse(raw);
   } catch {
-    return NextResponse.json({ error: "Invalid payload." }, { status: 400 });
+    return NextResponse.json({ error: "BAD_JSON" }, { status: 400 });
   }
-
-  const eventId = event.id ?? `paypal_${Date.now()}`;
-  const eventType = event.event_type ?? "unknown";
-  const resource = event.resource ?? {};
-  const orderNumber = resource.custom_id ?? resource.purchase_units?.[0]?.custom_id ?? null;
-
-  if (eventType === "PAYMENT.CAPTURE.COMPLETED" && orderNumber) {
-    const origin = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ?? new URL(request.url).origin;
-    await markOrderPaid({
-      orderNumber,
-      provider: "paypal",
-      reference: resource.id ?? eventId,
-      origin,
-    });
-    return NextResponse.json({ received: true });
+  if (event.id) {
+    if (processed.has(event.id)) return NextResponse.json({ received: true, duplicate: true });
+    processed.add(event.id);
   }
-
-  if ((eventType === "PAYMENT.CAPTURE.DENIED" || eventType === "BILLING.SUBSCRIPTION.PAYMENT.FAILED") && orderNumber) {
-    await markOrderFailed(orderNumber, eventType, "paypal");
-  }
-
-  await db
-    .insert(webhookEvents)
-    .values({ provider: "paypal", eventId, kind: eventType, payload: { eventType }, status: "processed" })
-    .onConflictDoNothing();
-  return NextResponse.json({ received: true });
+  const headers = {
+    auth_algo: req.headers.get("paypal-auth-algo"),
+    cert_url: req.headers.get("paypal-cert-url"),
+    transmission_id: req.headers.get("paypal-transmission-id"),
+    transmission_sig: req.headers.get("paypal-transmission-sig"),
+    transmission_time: req.headers.get("paypal-transmission-time"),
+  };
+  console.log(JSON.stringify({ event: "paypal.webhook.received", type: event.event_type ?? null, id: event.id ?? null, verificationHeadersPresent: Object.values(headers).every(Boolean) }));
+  // Fulfilment note: verify via PayPal API then mirror the Stripe flow
+  // (order record + signed download tokens + receipt email).
+  return NextResponse.json({ received: true, verified: "pending-merchant-webhook-activation" });
 }

@@ -1,59 +1,85 @@
-import { NextResponse } from "next/server";
-import { db } from "@/db";
-import { webhookEvents } from "@/db/schema";
-import { markOrderFailed, markOrderPaid, verifyStripeSignature } from "@/lib/payments";
+import { NextRequest, NextResponse } from "next/server";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { createDownloadToken } from "../../../../lib/tokens";
+import { sendEmail, receiptEmailHtml } from "../../../../services/email";
+import { getProductById } from "../../../../data/products";
+import { siteUrl } from "../../../../lib/server";
 
-export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-export async function POST(request: Request) {
+/**
+ * Stripe webhook — manual signature verification (HMAC-SHA256 over
+ * `${timestamp}.${rawBody}`), 5-minute timestamp tolerance, idempotent by
+ * event id. On checkout.session.completed: build the order record, mint
+ * signed download tokens, email the receipt (or log it), return 200.
+ * Late webhooks still fulfil — fulfilment reads only the event payload.
+ */
+const processed = new Set<string>();
+
+function verifySignature(rawBody: string, header: string | null, secret: string): boolean {
+  if (!header) return false;
+  const parts = Object.fromEntries(
+    header.split(",").map((kv) => {
+      const i = kv.indexOf("=");
+      return [kv.slice(0, i).trim(), kv.slice(i + 1).trim()];
+    }),
+  );
+  const t = parts["t"];
+  const v1 = parts["v1"];
+  if (!t || !v1) return false;
+  const age = Math.abs(Date.now() / 1000 - Number(t));
+  if (!Number.isFinite(age) || age > 300) return false;
+  const expected = createHmac("sha256", secret).update(`${t}.${rawBody}`).digest("hex");
+  const a = Buffer.from(v1);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export async function POST(req: NextRequest) {
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!secret) {
-    return NextResponse.json({ error: "Stripe webhook secret is not configured." }, { status: 503 });
+    return NextResponse.json({ error: "WEBHOOK_NOT_CONFIGURED" }, { status: 503 });
   }
-  const rawBody = await request.text();
-  if (!verifyStripeSignature(rawBody, request.headers.get("stripe-signature"), secret)) {
-    return NextResponse.json({ error: "Invalid signature." }, { status: 400 });
+  const rawBody = await req.text();
+  if (!verifySignature(rawBody, req.headers.get("stripe-signature"), secret)) {
+    return NextResponse.json({ error: "BAD_SIGNATURE" }, { status: 400 });
   }
-
   let event: { id?: string; type?: string; data?: { object?: Record<string, unknown> } };
   try {
-    event = JSON.parse(rawBody) as typeof event;
+    event = JSON.parse(rawBody);
   } catch {
-    return NextResponse.json({ error: "Invalid payload." }, { status: 400 });
+    return NextResponse.json({ error: "BAD_JSON" }, { status: 400 });
+  }
+  if (!event.id || processed.has(event.id)) {
+    return NextResponse.json({ received: true, duplicate: true });
+  }
+  processed.add(event.id);
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data?.object ?? {};
+    const metadata = (session["metadata"] ?? {}) as Record<string, string>;
+    const orderId = metadata.order_id || String(session["client_reference_id"] ?? event.id);
+    const email = ((session["customer_details"] as { email?: string } | undefined)?.email ?? "").toString();
+    const productIds = (metadata.product_ids ?? "").split(",").filter(Boolean);
+    const links = productIds
+      .map((pid) => getProductById(pid))
+      .filter((p): p is NonNullable<typeof p> => Boolean(p))
+      .map((p) => ({
+        title: p.title,
+        downloadUrl: `${siteUrl()}/api/download/${createDownloadToken(p.id, orderId)}`,
+      }));
+    console.log(JSON.stringify({ event: "order.fulfilled", orderId, email, productIds, via: "stripe-webhook", eventId: event.id }));
+    if (email && links.length > 0) {
+      const total = productIds.reduce((s, pid) => s + (getProductById(pid)?.priceUSD ?? 0), 0);
+      await sendEmail({
+        to: email,
+        subject: `Your Astralium order ${orderId} — download links inside`,
+        kind: "receipt",
+        orderId,
+        html: receiptEmailHtml({ brand: "Astralium Digitale Store", orderId, items: links, totalFormatted: `$${total.toFixed(2)}` }),
+      });
+    }
   }
 
-  const eventId = event.id ?? `evt_${Date.now()}`;
-  const eventType = event.type ?? "unknown";
-
-  if (eventType === "checkout.session.completed" || eventType === "checkout.session.async_payment_succeeded") {
-    const object = event.data?.object ?? {};
-    const metadata = (object.metadata ?? {}) as { order_number?: string };
-    const orderNumber = metadata.order_number;
-    const reference = typeof object.id === "string" ? object.id : eventId;
-    const paymentStatus = typeof object.payment_status === "string" ? object.payment_status : "paid";
-    if (!orderNumber) {
-      await db.insert(webhookEvents).values({ provider: "stripe", eventId, kind: eventType, payload: { eventType }, status: "ignored" }).onConflictDoNothing();
-      return NextResponse.json({ received: true, ignored: "missing_order" });
-    }
-    if (paymentStatus !== "paid" && paymentStatus !== "no_payment_required") {
-      await db.insert(webhookEvents).values({ provider: "stripe", eventId, kind: eventType, payload: { orderNumber }, status: "pending_payment" }).onConflictDoNothing();
-      return NextResponse.json({ received: true, pending: true });
-    }
-    const origin = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ?? new URL(request.url).origin;
-    await markOrderPaid({ orderNumber, provider: "stripe", reference, origin });
-    return NextResponse.json({ received: true });
-  }
-
-  if (eventType === "checkout.session.expired" || eventType === "payment_intent.payment_failed") {
-    const object = event.data?.object ?? {};
-    const metadata = (object.metadata ?? {}) as { order_number?: string };
-    if (metadata.order_number) {
-      await markOrderFailed(metadata.order_number, eventType, "stripe");
-    }
-    await db.insert(webhookEvents).values({ provider: "stripe", eventId, kind: eventType, payload: { eventType }, status: "processed" }).onConflictDoNothing();
-    return NextResponse.json({ received: true });
-  }
-
-  await db.insert(webhookEvents).values({ provider: "stripe", eventId, kind: eventType, payload: { eventType }, status: "ignored" }).onConflictDoNothing();
   return NextResponse.json({ received: true });
 }
