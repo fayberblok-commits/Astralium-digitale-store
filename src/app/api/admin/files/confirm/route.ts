@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ADMIN_COOKIE, isAdminSession } from "../../../../../lib/admin";
+import { requireAdmin } from "../../../../../lib/team";
 import { getProductById } from "../../../../../data/products";
 import { headObject, isStorageConfigured } from "../../../../../services/storage";
 import { setBinding } from "../../../../../lib/bindings";
@@ -13,9 +13,8 @@ export const runtime = "nodejs";
  * (DB Product row when configured, else the local .data JSON store).
  */
 export async function POST(req: NextRequest) {
-  if (!isAdminSession(req.cookies.get(ADMIN_COOKIE)?.value)) {
-    return NextResponse.json({ error: "ADMIN_UNAUTHORIZED" }, { status: 401 });
-  }
+  const auth = await requireAdmin(req, "files");
+  if ("error" in auth) return auth.error;
   if (!isStorageConfigured()) {
     return NextResponse.json({ error: "STORAGE_NOT_CONFIGURED" }, { status: 503 });
   }

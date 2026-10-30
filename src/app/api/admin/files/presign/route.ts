@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ADMIN_COOKIE, isAdminSession } from "../../../../../lib/admin";
+import { requireAdmin } from "../../../../../lib/team";
 import { getProductById } from "../../../../../data/products";
 import { ALLOWED_EXTENSIONS, MAX_DECLARED_BYTES, sanitizeFilename } from "../../../../../lib/uploads";
 import {
@@ -16,9 +16,8 @@ export const runtime = "nodejs";
  * uploads the file directly to S3. Nothing touches this server but JSON.
  */
 export async function POST(req: NextRequest) {
-  if (!isAdminSession(req.cookies.get(ADMIN_COOKIE)?.value)) {
-    return NextResponse.json({ error: "ADMIN_UNAUTHORIZED" }, { status: 401 });
-  }
+  const auth = await requireAdmin(req, "files");
+  if ("error" in auth) return auth.error;
   if (!isStorageConfigured()) {
     return NextResponse.json({ error: "STORAGE_NOT_CONFIGURED" }, { status: 503 });
   }

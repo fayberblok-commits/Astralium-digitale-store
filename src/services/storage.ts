@@ -206,6 +206,34 @@ export function buildSignedHeaders(
   };
 }
 
+/**
+ * Fetch an object's bytes server-side (signed GET). Used by PDF
+ * watermarking (Phase 5): the object is pulled through the app so the
+ * stamped copy — never the original — is what reaches the buyer.
+ * Returns null when storage is unconfigured, the object is missing, or
+ * the body exceeds `maxBytes` (caller falls back to the presigned path).
+ */
+export async function getObjectBytes(
+  key: string,
+  maxBytes: number,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Uint8Array | null> {
+  const cfg = getStorageConfig();
+  if (!cfg) return null;
+  const { url, headers } = buildSignedHeaders(cfg, "GET", key);
+  try {
+    const res = await fetchImpl(url, { method: "GET", headers });
+    if (!res.ok) return null;
+    const declared = Number(res.headers.get("content-length") ?? 0);
+    if (declared > maxBytes) return null;
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.byteLength > maxBytes) return null;
+    return buf;
+  } catch {
+    return null;
+  }
+}
+
 export async function headObject(
   key: string,
   fetchImpl: typeof fetch = fetch,

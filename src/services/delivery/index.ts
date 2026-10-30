@@ -161,20 +161,35 @@ export async function deliverOrder(
     return { ok: false, reason: lastReason };
   }
 
+  // Phase 6, feature 26: a terminal delivery failure (nothing reached
+  // the customer on any channel) notifies the owner notification
+  // center. Fire-and-forget — recording never changes the outcome.
+  async function finish(outcome: DeliverOutcome): Promise<DeliverOutcome> {
+    if (outcome.deliveredVia === null && !outcome.alreadyDelivered) {
+      const { recordOwnerEvent } = await import("../../lib/owner-alerts.ts");
+      void recordOwnerEvent({
+        kind: "delivery_failed",
+        title: `Delivery failed for order ${order.orderId}`,
+        detail: { requested, reason: outcome.reason ?? null },
+      });
+    }
+    return outcome;
+  }
+
   const primary = await tryChannel(requested);
   if (primary.ok) {
     return { deliveredVia: requested, fellBack: false, alreadyDelivered: Boolean(primary.already), attempts };
   }
   if (requested === "email") {
-    return { deliveredVia: null, fellBack: false, alreadyDelivered: false, attempts, reason: primary.reason };
+    return finish({ deliveredVia: null, fellBack: false, alreadyDelivered: false, attempts, reason: primary.reason });
   }
   // Automatic email fallback — the base channel always runs.
   const fallback = await tryChannel("email");
-  return {
+  return finish({
     deliveredVia: fallback.ok ? "email" : null,
     fellBack: true,
     alreadyDelivered: Boolean(fallback.already),
     attempts,
     reason: fallback.ok ? undefined : fallback.reason,
-  };
+  });
 }

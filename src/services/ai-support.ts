@@ -8,7 +8,7 @@
  * human when unsure. It never sees other customers' data — order lookups
  * require the caller to pass an email-verified order summary (future phase).
  */
-import { PRODUCTS, FAQS, type Product } from "../data/products";
+import { PRODUCTS, FAQS, type Product } from "../data/products.ts";
 
 export interface SupportAnswer {
   answer: string;

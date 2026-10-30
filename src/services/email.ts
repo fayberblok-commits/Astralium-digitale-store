@@ -10,8 +10,19 @@ export interface EmailMessage {
   to: string;
   subject: string;
   html: string;
-  kind: "receipt" | "abandoned-cart" | "newsletter" | "refund" | "review-request";
+  kind:
+    | "receipt" | "abandoned-cart" | "newsletter" | "refund" | "review-request" | "product-update" | "price-alert"
+    // Phase 4 kinds
+    | "gift" | "gift-confirmation" | "dunning" | "preorder-release"
+    // Phase 5 kinds
+    | "win-back"
+    // Phase 6 kinds
+    | "owner-alert" | "privacy";
   orderId?: string;
+  /** Extra headers passed through to the provider (e.g. List-Unsubscribe). */
+  headers?: Record<string, string>;
+  /** Optional file attachments (Resend): content is base64. */
+  attachments?: { filename: string; contentBase64: string }[];
 }
 
 export async function sendEmail(msg: EmailMessage): Promise<{ delivered: boolean; provider: string }> {
@@ -25,7 +36,13 @@ export async function sendEmail(msg: EmailMessage): Promise<{ delivered: boolean
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from, to: msg.to, subject: msg.subject, html: msg.html }),
+      body: JSON.stringify({
+        from, to: msg.to, subject: msg.subject, html: msg.html,
+        ...(msg.headers && Object.keys(msg.headers).length > 0 ? { headers: msg.headers } : {}),
+        ...(msg.attachments && msg.attachments.length > 0
+          ? { attachments: msg.attachments.map((a) => ({ filename: a.filename, content: a.contentBase64 })) }
+          : {}),
+      }),
     });
     if (!res.ok) {
       console.log(JSON.stringify({ event: "email.failed", kind: msg.kind, status: res.status }));

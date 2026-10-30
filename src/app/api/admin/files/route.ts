@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ADMIN_COOKIE, isAdminSession } from "../../../../lib/admin";
+import { requireAdmin } from "../../../../lib/team";
 import { getProductById } from "../../../../data/products";
 import { getBinding } from "../../../../lib/bindings";
 import { isStorageConfigured } from "../../../../services/storage";
@@ -9,9 +9,8 @@ export const runtime = "nodejs";
 
 /** Current file binding + configuration status for one product. */
 export async function GET(req: NextRequest) {
-  if (!isAdminSession(req.cookies.get(ADMIN_COOKIE)?.value)) {
-    return NextResponse.json({ error: "ADMIN_UNAUTHORIZED" }, { status: 401 });
-  }
+  const auth = await requireAdmin(req, "read");
+  if ("error" in auth) return auth.error;
   const productId = req.nextUrl.searchParams.get("productId");
   if (!productId || !getProductById(productId)) {
     return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 404 });

@@ -1,10 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
-import { getProductById, getBundleById } from "../../../data/products";
+import { getProductById, PRODUCTS } from "../../../data/products";
+import { resolveBundle } from "../../../lib/bundles";
+import { byoDiscount, round2 } from "../../../lib/byo";
+import { getFlag } from "../../../lib/flags";
+import { getOfferConfig, resolveBumps } from "../../../lib/offers";
 import { applyCoupon } from "../../../lib/coupons";
-import { recordConsent } from "../../../lib/pii";
+import { piiConfigured, recordConsent } from "../../../lib/pii";
 import { normalizePhone } from "../../../lib/phone";
 import { siteUrl } from "../../../lib/server";
+// Phase 4 (features 9–16)
+import { countFlashSaleOrder, listFlashSales, resolveFlashPrices } from "../../../lib/flash-sales";
+import { getPwywConfig, resolvePwywPrice, type PwywChoice } from "../../../lib/pwyw";
+import { createGifts, validateGiftInput, type GiftInput } from "../../../lib/gifts";
+import { commitSpendForOrder, previewRedemption } from "../../../lib/loyalty";
+import { getReferralConfig, recordAttribution } from "../../../lib/referrals";
+// Phase 5 (feature 19): fraud shield — blacklist + risk scoring + holds.
+import { assessCheckout, isBlacklisted, recordFailedAttempt } from "../../../lib/fraud";
 
 export const runtime = "nodejs";
 
@@ -27,9 +39,15 @@ export async function POST(req: NextRequest) {
     email?: string;
     provider?: string;
     coupon?: string;
+    bumpProductIds?: string[];
     locale?: string;
     orderId?: string;
     delivery?: { channel?: string; phoneE164?: string; optIn?: boolean };
+    // Phase 4: pwyw choices per product, gift marks, loyalty redemption, referral code
+    pwyw?: Record<string, PwywChoice>;
+    gifts?: GiftInput[];
+    loyaltyPoints?: number;
+    refCode?: string;
   } | null;
   if (!body || !Array.isArray(body.items) || body.items.length === 0) {
     return NextResponse.json({ error: "EMPTY_CART" }, { status: 400 });
@@ -40,6 +58,17 @@ export async function POST(req: NextRequest) {
   }
   const locale = body.locale && body.locale.length <= 10 ? body.locale : "en";
   const orderId = (body.orderId ?? `AST-${Date.now().toString(36).toUpperCase()}`).slice(0, 40);
+  const clientIp =
+    req.headers.get("cf-connecting-ip") ??
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "unknown";
+
+  // Fraud shield (Phase 5, feature 19): a blacklisted email is refused
+  // before any payment session exists. Hash-only lookup (lib/fraud.ts).
+  const fraudOn = await getFlag("fraud_shield");
+  if (fraudOn && (await isBlacklisted(email))) {
+    return NextResponse.json({ error: "EMAIL_BLACKLISTED" }, { status: 403 });
+  }
 
   // Delivery channel (Phase 2). WhatsApp requires a valid E.164 number and
   // an explicit opt-in; the consent is recorded now (subject stored only as
@@ -66,24 +95,112 @@ export async function POST(req: NextRequest) {
   // stay a single line at the bundle price; their products are recorded
   // for fulfilment.
   const productIds: string[] = [];
+  const standaloneIds: string[] = []; // direct product items (BYO counts these)
   const lineItems: { title: string; amountUSD: number }[] = [];
+  const lineProductIds: (string | null)[] = []; // aligned with lineItems (null = bundle line)
   let subtotal = 0;
   for (const ref of body.items) {
     const product = getProductById(ref.id);
     if (product) {
       productIds.push(product.id);
+      standaloneIds.push(product.id);
       lineItems.push({ title: product.title, amountUSD: product.priceUSD });
+      lineProductIds.push(product.id);
       subtotal += product.priceUSD;
       continue;
     }
-    const bundle = getBundleById(ref.id);
+    const bundle = await resolveBundle(ref.id);
     if (bundle) {
       productIds.push(...bundle.productIds);
       lineItems.push({ title: bundle.title, amountUSD: bundle.priceUSD });
+      lineProductIds.push(null);
       subtotal += bundle.priceUSD;
       continue;
     }
     return NextResponse.json({ error: `UNKNOWN_ITEM:${ref.id}` }, { status: 400 });
+  }
+
+  // Phase 4 price layer — applied to standalone product lines BEFORE any
+  // discount. Both features recompute prices server-side from owner
+  // config + catalog; client-sent amounts are never trusted.
+  const adjustLine = (productId: string, amountUSD: number) => {
+    const idx = lineProductIds.indexOf(productId);
+    if (idx >= 0) {
+      subtotal = round2(subtotal - lineItems[idx].amountUSD + amountUSD);
+      lineItems[idx] = { ...lineItems[idx], amountUSD };
+    }
+  };
+
+  // Flash sales (feature 9): an active campaign's price wins for its
+  // products; the cap is enforced inside resolveFlashPrices via the
+  // campaign state machine (sold-out campaigns do not discount).
+  let flashDiscountUSD = 0;
+  const flashUnitsBySale = new Map<string, number>();
+  if (await getFlag("flash_sales")) {
+    const sales = await listFlashSales();
+    const flashPrices = resolveFlashPrices(sales, standaloneIds, getProductById);
+    for (const fp of flashPrices.values()) {
+      adjustLine(fp.productId, fp.priceUSD);
+      flashDiscountUSD = round2(flashDiscountUSD + (fp.fullPriceUSD - fp.priceUSD));
+      flashUnitsBySale.set(fp.saleId, (flashUnitsBySale.get(fp.saleId) ?? 0) + standaloneIds.filter((id) => id === fp.productId).length);
+    }
+  }
+  const countFlashUnits = async () => {
+    for (const [saleId, units] of flashUnitsBySale) {
+      await countFlashSaleOrder(saleId, orderId, units);
+    }
+  };
+
+  // Pay-what-you-want / tiers (feature 13): validated against the stored
+  // per-product config; below-min or unknown tiers fail the checkout.
+  if (body.pwyw && Object.keys(body.pwyw).length > 0 && (await getFlag("pwyw"))) {
+    const config = await getPwywConfig();
+    for (const [pid, choice] of Object.entries(body.pwyw)) {
+      if (!standaloneIds.includes(pid)) continue;
+      const product = getProductById(pid);
+      if (!product) continue;
+      const resolved = resolvePwywPrice(config, product, choice ?? {});
+      if (!resolved.ok) {
+        return NextResponse.json({ error: `PWYW_${resolved.error}:${pid}` }, { status: 400 });
+      }
+      adjustLine(pid, resolved.priceUSD);
+    }
+  }
+
+  // Gift marks (feature 10): validated now (recipient, product in cart,
+  // PII encryption available); records are created once the payment
+  // session exists — delivery itself only happens on the paid webhook.
+  const giftInputs: GiftInput[] = Array.isArray(body.gifts) ? body.gifts : [];
+  if (giftInputs.length > 0) {
+    if (!(await getFlag("gifts"))) {
+      return NextResponse.json({ error: "GIFTS_DISABLED" }, { status: 403 });
+    }
+    if (!piiConfigured()) {
+      return NextResponse.json({ error: "PII_NOT_CONFIGURED" }, { status: 400 });
+    }
+    for (const gift of giftInputs) {
+      if (!standaloneIds.includes(gift.productId)) {
+        return NextResponse.json({ error: `GIFT_PRODUCT_NOT_IN_CART:${gift.productId}` }, { status: 400 });
+      }
+      const check = validateGiftInput(gift);
+      if (!check.ok) {
+        return NextResponse.json({ error: `GIFT_${check.error}` }, { status: 400 });
+      }
+    }
+  }
+
+  // Order bumps (Phase 3, feature 4): flag-gated, prices re-derived from
+  // the server-side offer config — the client only names product ids.
+  const bumpLines: { productId: string; title: string; priceUSD: number }[] = [];
+  if (Array.isArray(body.bumpProductIds) && body.bumpProductIds.length > 0 && (await getFlag("order_bump"))) {
+    const config = await getOfferConfig();
+    for (const line of resolveBumps(standaloneIds, body.bumpProductIds, config)) {
+      bumpLines.push({ productId: line.productId, title: line.title, priceUSD: line.priceUSD });
+      productIds.push(line.productId);
+      lineItems.push({ title: `${line.title} (bump −${line.discountPercent}%)`, amountUSD: line.priceUSD });
+      lineProductIds.push(null);
+      subtotal += line.priceUSD;
+    }
   }
 
   // Coupon (server-side re-validation; country from CF header when present).
@@ -93,7 +210,62 @@ export async function POST(req: NextRequest) {
     const result = applyCoupon(body.coupon, subtotal, { isFirstOrder: true, country });
     if (result.ok) discount = result.discountUSD;
   }
+  // Build-your-own bundle (Phase 3, feature 3): any 3+ distinct products
+  // earn an automatic 15% on those products, server-validated here and
+  // itemized separately from any coupon.
+  let byoDiscountUSD = 0;
+  if (await getFlag("bundles")) {
+    byoDiscountUSD = byoDiscount(standaloneIds, PRODUCTS).discountUSD;
+  }
+  const couponDiscountUSD = discount; // coupon only — BYO is itemized separately
+  discount += byoDiscountUSD;
+
+  // Loyalty redemption (feature 11): flag-gated; the ledger applies its
+  // own server-side caps (balance + max % of the payable total) — the
+  // requested points are only a ceiling. This step is a read-only
+  // preview that prices the order; the points are COMMITTED in
+  // persistOrderExtras, only once the payment session exists.
+  let loyaltyRedeemUSD = 0;
+  let loyaltyPointsSpent = 0;
+  if (body.loyaltyPoints && body.loyaltyPoints > 0 && (await getFlag("loyalty"))) {
+    const redemption = await previewRedemption(email, body.loyaltyPoints, Math.max(0, subtotal - discount));
+    loyaltyPointsSpent = redemption.points;
+    loyaltyRedeemUSD = redemption.valueUSD;
+    discount += loyaltyRedeemUSD;
+  }
   const total = Math.max(0, Math.round((subtotal - discount) * 100) / 100);
+
+  // Fraud shield (Phase 5, feature 19): risk-score this checkout from
+  // server-side signals (disposable domain, email/IP velocity, amount,
+  // past failures). A score at/above the owner's threshold creates a
+  // pending HOLD: payment proceeds, but delivery pauses (webhook +
+  // download route enforce it) until the owner reviews. Review-only —
+  // the buyer is never told and nothing is auto-refunded.
+  if (fraudOn) {
+    const assessment = await assessCheckout({ orderId, email, ip: clientIp, amountUSD: total });
+    if (!assessment.blocked && assessment.held) {
+      console.log(JSON.stringify({ event: "fraud.hold", orderId, score: assessment.score, reasons: assessment.reasons }));
+    }
+  }
+
+  // Per-order extras persisted once the payment session exists: gift
+  // records (delivery fires on the paid webhook) and the referral
+  // attribution (flips to "earned" on the paid webhook).
+  const persistOrderExtras = async () => {
+    if (loyaltyPointsSpent > 0) {
+      await commitSpendForOrder(email, orderId, loyaltyPointsSpent);
+    }
+    if (giftInputs.length > 0) {
+      await createGifts(orderId, email, giftInputs);
+    }
+    if (body.refCode && (await getFlag("referrals"))) {
+      const refConfig = await getReferralConfig();
+      await recordAttribution({
+        code: body.refCode, orderId, buyerEmail: email,
+        orderTotalUSD: total, commissionPercent: refConfig.commissionPercent,
+      });
+    }
+  };
 
   const provider = body.provider === "paypal" ? "paypal" : "stripe";
   const base = siteUrl();
@@ -108,7 +280,13 @@ export async function POST(req: NextRequest) {
     form.set("metadata[order_id]", orderId);
     form.set("metadata[product_ids]", productIds.join(","));
     form.set("metadata[delivery_channel]", deliveryChannel);
+    if (byoDiscountUSD > 0) form.set("metadata[byo_discount_usd]", byoDiscountUSD.toFixed(2));
+    if (bumpLines.length > 0) form.set("metadata[bump_product_ids]", bumpLines.map((b) => b.productId).join(","));
     if (deliverySubjectHash) form.set("metadata[delivery_subject_hash]", deliverySubjectHash);
+    // Phase 4 metadata: flash campaign ids, gift items, loyalty spend.
+    if (flashUnitsBySale.size > 0) form.set("metadata[flash_sale_ids]", [...flashUnitsBySale.keys()].join(","));
+    if (giftInputs.length > 0) form.set("metadata[gift_product_ids]", giftInputs.map((g) => g.productId).join(","));
+    if (loyaltyPointsSpent > 0) form.set("metadata[loyalty_points]", String(loyaltyPointsSpent));
     form.set("payment_method_types[0]", "card");
     form.set("payment_method_types[1]", "link");
     // One aggregated line keeps Stripe Tax/coupons simple in this release;
@@ -147,9 +325,19 @@ export async function POST(req: NextRequest) {
     });
     const session = (await res.json()) as { id?: string; url?: string; error?: { message?: string } };
     if (!res.ok || !session.url) {
+      if (fraudOn) await recordFailedAttempt({ email, ip: clientIp });
       return NextResponse.json({ error: session.error?.message ?? "STRIPE_ERROR" }, { status: 502 });
     }
-    return NextResponse.json({ url: session.url, sessionId: session.id, orderId });
+    await persistOrderExtras();
+    await countFlashUnits();
+    return NextResponse.json({
+      url: session.url, sessionId: session.id, orderId,
+      pricing: {
+        subtotalUSD: Math.round(subtotal * 100) / 100,
+        couponDiscountUSD, byoDiscountUSD, flashDiscountUSD, loyaltyRedeemUSD,
+        totalUSD: total,
+      },
+    });
   }
 
   if (provider === "paypal" && process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET) {
@@ -160,7 +348,10 @@ export async function POST(req: NextRequest) {
       headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" },
       body: "grant_type=client_credentials",
     });
-    if (!tokenRes.ok) return NextResponse.json({ error: "PAYPAL_AUTH_FAILED" }, { status: 502 });
+    if (!tokenRes.ok) {
+      if (fraudOn) await recordFailedAttempt({ email, ip: clientIp });
+      return NextResponse.json({ error: "PAYPAL_AUTH_FAILED" }, { status: 502 });
+    }
     const { access_token } = (await tokenRes.json()) as { access_token: string };
     const orderRes = await fetch(`${paypalBase}/v2/checkout/orders`, {
       method: "POST",
@@ -186,9 +377,19 @@ export async function POST(req: NextRequest) {
     const order = (await orderRes.json()) as { id?: string; links?: { rel: string; href: string }[] };
     const approve = order.links?.find((l) => l.rel === "approve")?.href;
     if (!orderRes.ok || !approve) {
+      if (fraudOn) await recordFailedAttempt({ email, ip: clientIp });
       return NextResponse.json({ error: "PAYPAL_ORDER_FAILED" }, { status: 502 });
     }
-    return NextResponse.json({ url: approve, providerOrderId: order.id, orderId });
+    await persistOrderExtras();
+    await countFlashUnits();
+    return NextResponse.json({
+      url: approve, providerOrderId: order.id, orderId,
+      pricing: {
+        subtotalUSD: Math.round(subtotal * 100) / 100,
+        couponDiscountUSD, byoDiscountUSD, flashDiscountUSD, loyaltyRedeemUSD,
+        totalUSD: total,
+      },
+    });
   }
 
   return NextResponse.json(
