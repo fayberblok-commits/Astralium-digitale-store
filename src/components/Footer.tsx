@@ -7,8 +7,12 @@ export default function Footer({ locale, dict }: { locale: string; dict: Dict })
     <footer className="site-footer">
       <div className="footer-inner">
         <div>
-          <p className="brand">
-            <span className="brand-star">✦</span> {dict.brand}
+          <p className="footer-brand">
+            <span className="brand-line">
+              <span className="brand-star">✦</span>
+              <span>{dict.brand}</span>
+            </span>
+            <span className="brand-suffix">{dict.brandSuffix}</span>
           </p>
           <p className="muted">{dict.footer_tag}</p>
           <p className="muted">{dict.free_returns_note}</p>

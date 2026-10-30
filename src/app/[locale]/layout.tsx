@@ -53,7 +53,7 @@ export default async function LocaleLayout({
     <html lang={locale} dir={isRTL(locale) ? "rtl" : "ltr"} suppressHydrationWarning>
       <head>
         <link rel="manifest" href="/manifest.webmanifest" />
-        <meta name="theme-color" content="#070a18" />
+        <meta name="theme-color" content="#100e0c" />
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
         <script
           type="application/ld+json"

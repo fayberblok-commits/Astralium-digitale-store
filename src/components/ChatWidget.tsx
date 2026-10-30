@@ -65,7 +65,7 @@ export default function ChatWidget({ dict, locale }: { dict: Dict; locale: strin
         </div>
       )}
       <button type="button" className="chat-fab" onClick={() => setOpen((o) => !o)} aria-label={dict.chat_t}>
-        💬
+        ✦
       </button>
     </div>
   );

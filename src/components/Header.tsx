@@ -16,10 +16,11 @@ export default function Header({
     <header className="site-header">
       <div className="header-inner">
         <Link href={`/${locale}`} className="brand" aria-label={dict.brand}>
-          <span className="brand-star">✦</span>
-          <span>
-            {dict.brand} <span className="brand-suffix">{dict.brandSuffix}</span>
+          <span className="brand-line">
+            <span className="brand-star">✦</span>
+            <span>{dict.brand}</span>
           </span>
+          <span className="brand-suffix">{dict.brandSuffix}</span>
         </Link>
         <nav className="main-nav" aria-label="Main">
           <Link href={`/${locale}`}>{dict.nav_home}</Link>

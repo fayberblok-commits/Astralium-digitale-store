@@ -19,18 +19,20 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
   return (
     <>
       <section className="hero">
-        <p className="hero-kicker">{dict.hero_kicker}</p>
-        <h1>{dict.hero_title}</h1>
-        <p>{dict.hero_sub}</p>
-        <div className="btn-row" style={{ justifyContent: "center" }}>
-          <Link href={`/${locale}/shop`} className="btn btn-primary btn-lg">{dict.hero_cta}</Link>
-          <Link href={`/${locale}/product/${hero.slug}`} className="btn btn-lg">{dict.hero_cta2}</Link>
+        <div className="hero-frame">
+          <p className="hero-kicker">{dict.hero_kicker}</p>
+          <h1>{dict.hero_title}</h1>
+          <p>{dict.hero_sub}</p>
+          <div className="btn-row" style={{ justifyContent: "center" }}>
+            <Link href={`/${locale}/shop`} className="btn btn-primary btn-lg">{dict.hero_cta}</Link>
+            <Link href={`/${locale}/product/${hero.slug}`} className="btn btn-lg">{dict.hero_cta2}</Link>
+          </div>
         </div>
         <div className="trust-row" aria-label="Trust">
-          <span className="trust-badge">🔒 {dict.trust_secure}</span>
-          <span className="trust-badge">⚡ {dict.trust_instant}</span>
-          <span className="trust-badge">🌍 {dict.trust_global}</span>
-          <span className="trust-badge">🛡️ {dict.trust_guarantee}</span>
+          <span className="trust-item">{dict.trust_secure}</span>
+          <span className="trust-item">{dict.trust_instant}</span>
+          <span className="trust-item">{dict.trust_global}</span>
+          <span className="trust-item">{dict.trust_guarantee}</span>
         </div>
       </section>
 
@@ -55,7 +57,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
         </div>
       </section>
 
-      <section className="section">
+      <section className="section band-dark">
         <h2>{dict.sec_bundles}</h2>
         <div className="grid">
           {BUNDLES.map((b) => (
