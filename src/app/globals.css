@@ -65,6 +65,11 @@ body {
   font-family: var(--font-body);
   line-height: 1.6;
   min-height: 100vh;
+  /* Belt-and-braces only (the masthead itself is fixed structurally):
+     clip any stray horizontal overflow from future content. `clip` —
+     unlike `hidden` — creates no scroll container, so the sticky
+     masthead keeps working. */
+  overflow-x: clip;
 }
 h1, h2, h3, .cover-title { font-family: var(--font-display); font-weight: 600; line-height: 1.15; }
 a { color: inherit; }
@@ -115,6 +120,25 @@ main { max-width: var(--max); margin: 0 auto; padding: 0 20px 96px; }
   .brand-suffix { margin-inline-start: 0; }
   .header-actions { grid-column: 2; }
   .main-nav { grid-column: 1 / -1; justify-self: center; }
+  /* Grid/flex children must never force the masthead wider than the screen:
+     their automatic minimum size is their content, which is exactly what
+     pushed the layout to 502px on phones. */
+  .brand, .header-actions, .main-nav { min-width: 0; }
+  .header-actions .switcher { min-width: 0; }
+  .header-actions .switcher select { min-width: 0; }
+}
+/* Small phones: the brand + actions row cannot fit side by side (brand
+   ≈131px + actions ≈329px + gaps/padding ≈522px), so stack the masthead —
+   centred brand, then the actions on their own row, then the nav. */
+@media (max-width: 640px) {
+  .brand { grid-column: 1 / -1; justify-self: center; text-align: center; align-items: center; }
+  .brand-suffix { margin-inline-start: 0.36em; }
+  .header-actions {
+    grid-column: 1 / -1; grid-row: 2; justify-self: center;
+    flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 100%;
+  }
+  .header-actions .switcher select { max-width: 104px; }
+  .main-nav { grid-row: 3; flex-wrap: wrap; justify-content: center; row-gap: 4px; }
 }
 .switcher select, .catalog-tools select, .filter-inline select, .checkout-form select {
   background: var(--surface-strong); color: var(--text); border: 1px solid var(--line);
@@ -355,7 +379,7 @@ input:focus, textarea:focus { border-color: var(--gold); outline: none; }
 
 /* ── cookie + chat ─────────────────────────────────────────────────── */
 .cookie-banner {
-  position: fixed; bottom: 16px; inset-inline-start: 16px; z-index: 60; max-width: 420px;
+  position: fixed; bottom: 16px; inset-inline-start: 16px; z-index: 60; max-width: min(420px, calc(100vw - 32px));
   background: var(--surface-strong); border: 1px solid var(--gold); border-radius: var(--radius); padding: 17px 19px;
   box-shadow: var(--shadow);
 }
