@@ -31,6 +31,9 @@ model Product {
 
   orderItems    OrderItem[]
   downloadGrants DownloadGrant[]
+  versions      ProductVersion[]
+  reviews       Review[]
+  wishlistAlerts WishlistAlert[]
 }
 
 model Order {
@@ -135,10 +138,429 @@ model ConsentRecord {
   @@index([subjectHash])
 }
 
+/// Published product versions (Phase 3, feature 1). Publishing a new
+/// version never changes a buyer's download link: grants/tokens resolve
+/// through the product binding, which points at the latest version's file.
+model ProductVersion {
+  id        String   @id @default(cuid())
+  productId String
+  version   String
+  fileKey   String
+  notes     String?
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, version])
+  @@index([productId])
+}
+
+/// Owner-managed bundles (Phase 3, feature 3). When rows exist they replace
+/// the file-catalog bundles on the storefront; price is derived server-side
+/// from catalog prices minus discountPercent (never stored from the client).
+model Bundle {
+  id              String   @id @default(cuid())
+  title           String
+  description     String   @default("")
+  productIds      String[]
+  discountPercent Int      @default(15)
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+/// Customer reviews (Phase 3, feature 7). A review is never publicly
+/// visible until a moderator approves it (status pending → approved).
+/// Buyer email is stored only as a SHA-256 hash.
+model Review {
+  id         String   @id @default(cuid())
+  productId  String
+  orderId    String?
+  emailHash  String
+  verified   Boolean  @default(false)
+  rating     Int
+  title      String   @default("")
+  body       String
+  status     String   @default("pending") // pending | approved | rejected
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, status])
+  @@index([emailHash])
+}
+
+/// Wishlist price-drop alert registrations (Phase 3, feature 8). The email
+/// is stored ONLY as AES-256-GCM ciphertext (src/lib/pii.ts) plus its hash;
+/// priceAtSave snapshots the catalog price at opt-in time.
+model WishlistAlert {
+  id          String   @id @default(cuid())
+  emailHash   String
+  emailCipher String
+  productId   String
+  priceAtSave Float
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([emailHash, productId])
+  @@index([productId])
+}
+
+/// Flash-sale campaigns (Phase 4, feature 9). Prices are ALWAYS recomputed
+/// server-side from discountPercent + catalog prices; quantityCap is
+/// enforced at checkout and soldCount only moves through the idempotent
+/// per-order counter (countedOrderIds), so a retried checkout never
+/// double-counts.
+model FlashSale {
+  id              String   @id @default(cuid())
+  name            String
+  productIds      String[]
+  discountPercent Int      @default(20)
+  startsAt        DateTime
+  endsAt          DateTime
+  quantityCap     Int?
+  soldCount       Int      @default(0)
+  countedOrderIds String[] @default([])
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+/// Gift purchases (Phase 4, feature 10). One row per gifted item. The
+/// recipient email exists ONLY as SHA-256 hash + AES-256-GCM ciphertext
+/// (src/lib/pii.ts) — never plaintext. Status flow: pending (checkout
+/// created, awaiting payment) → scheduled (paid, sendAt in the future)
+/// → sent. The buyer never receives the recipient's download links.
+model Gift {
+  id                   String    @id @default(cuid())
+  orderId              String
+  productId            String
+  buyerEmail           String
+  recipientEmailHash   String
+  recipientEmailCipher String
+  message              String?
+  sendAt               DateTime?
+  status               String    @default("pending") // pending | scheduled | sent | failed
+  createdAt            DateTime  @default(now())
+  sentAt               DateTime?
+
+  @@unique([orderId, productId])
+  @@index([status, sendAt])
+  @@index([orderId])
+}
+
+/// Loyalty accounts (Phase 4, feature 11). Keyed by email hash; the
+/// balance is a cached projection of the LoyaltyEntry ledger, and every
+/// ledger write carries a unique idempotencyKey (earn:<orderId>,
+/// spend:<orderId>, expire:<earnKey>) so replays can never double-apply.
+model LoyaltyAccount {
+  id             String   @id @default(cuid())
+  emailHash      String   @unique
+  emailCipher    String   @default("")
+  balance        Int      @default(0)
+  lifetimeEarned Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  entries LoyaltyEntry[]
+}
+
+model LoyaltyEntry {
+  id             String   @id @default(cuid())
+  accountId      String
+  kind           String // earn | spend | expire | adjust
+  points         Int // signed delta
+  orderId        String?
+  idempotencyKey String   @unique
+  balanceAfter   Int
+  createdAt      DateTime @default(now())
+
+  account LoyaltyAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@index([orderId])
+}
+
+/// Referral codes (Phase 4, feature 12). One code per customer email
+/// (hash + ciphertext only). Attributions are recorded at checkout
+/// (status pending) and flipped to earned by the payment webhook;
+/// orderId is unique, so a double checkout/webhook can never create
+/// two commissions for one order. Payouts are recorded-only.
+model ReferralCode {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  emailHash   String   @unique
+  emailCipher String   @default("")
+  createdAt   DateTime @default(now())
+
+  attributions ReferralAttribution[]
+}
+
+model ReferralAttribution {
+  id                String   @id @default(cuid())
+  orderId           String   @unique
+  referralCodeId    String
+  buyerEmailHash    String
+  commissionPercent Float
+  orderTotalUSD     Float
+  commissionUSD     Float
+  status            String   @default("pending") // pending | earned
+  createdAt         DateTime @default(now())
+
+  referralCode ReferralCode @relation(fields: [referralCodeId], references: [id], onDelete: Cascade)
+
+  @@index([referralCodeId])
+  @@index([status])
+}
+
+/// Subscriptions (Phase 4, feature 15, Stripe Billing). The Stripe
+/// subscription id is the idempotency anchor; lastGrantedPeriodEnd makes
+/// invoice.paid replays safe (one delivery grant per billing cycle).
+/// Dunning state: status past_due + pastDueSince + dunningStep (index
+/// into the configured reminder offsets).
+model Subscription {
+  id                    String    @id @default(cuid())
+  emailHash             String
+  emailCipher           String    @default("")
+  productId             String
+  stripeCustomerId      String?
+  stripeSubscriptionId  String?   @unique
+  status                String    @default("incomplete") // incomplete | active | past_due | canceled
+  currentPeriodEnd      DateTime?
+  lastGrantedPeriodEnd  DateTime?
+  pastDueSince          DateTime?
+  dunningStep           Int       @default(0)
+  lastReminderAt        DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([emailHash])
+  @@index([status])
+}
+
+/// License keys (Phase 5, feature 18). Only the SHA-256 hash of the key and
+/// its last 4 characters are stored — the full key is shown to the buyer
+/// once, in the delivery email. Activations are device-id hashes, so no
+/// device identifier is ever stored raw.
+model LicenseKey {
+  id              String   @id @default(cuid())
+  keyHash         String   @unique
+  last4           String
+  orderId         String
+  productId       String
+  emailHash       String
+  activationLimit Int      @default(3)
+  activations     String[] @default([]) // device-id hashes
+  status          String   @default("active") // active | revoked
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([emailHash])
+  @@index([productId])
+}
+
+/// Fraud-shield telemetry (Phase 5, feature 19). Only SHA-256 hashes of
+/// email/IP are stored — never raw values. Events feed the pure scorer.
+model FraudEvent {
+  id        String   @id @default(cuid())
+  emailHash String
+  ipHash    String
+  amountUSD Float    @default(0)
+  outcome   String // checkout | failed
+  createdAt DateTime @default(now())
+
+  @@index([emailHash, createdAt])
+  @@index([ipHash, createdAt])
+}
+
+/// A paid order whose delivery is paused pending owner review (Phase 5,
+/// feature 19). emailCipher is AES-256-GCM (lib/pii.ts) so a release can
+/// re-deliver; it is empty when PII encryption is not configured.
+model FraudHold {
+  id          String    @id @default(cuid())
+  orderId     String    @unique
+  emailHash   String
+  emailCipher String    @default("")
+  score       Int
+  reasons     String[]
+  status      String    @default("pending") // pending | released | rejected
+  createdAt   DateTime  @default(now())
+  resolvedAt  DateTime?
+
+  @@index([status, createdAt])
+}
+
+/// Email blacklist (Phase 5, feature 19) — hash-only, enforced at checkout.
+model FraudBlacklist {
+  id        String   @id @default(cuid())
+  emailHash String   @unique
+  reason    String   @default("")
+  createdAt DateTime @default(now())
+}
+
+/// Blog posts (Phase 5, feature 21). Draft by default; published posts
+/// render through the safe markdown renderer (raw HTML is always escaped).
+model BlogPost {
+  id          String    @id @default(cuid())
+  slug        String
+  locale      String
+  title       String
+  excerpt     String    @default("")
+  bodyMd      String
+  status      String    @default("draft") // draft | published
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+
+  @@unique([locale, slug])
+  @@index([locale, status])
+}
+
+/// A/B test events (Phase 5, feature 23). Anonymous: only a SHA-256 hash
+/// of the visitor cookie is stored, so exposures de-duplicate per visitor
+/// without retaining an identifier.
+model AbEvent {
+  id           String   @id @default(cuid())
+  experimentId String
+  variantKey   String
+  type         String // exposure | conversion
+  visitorHash  String
+  createdAt    DateTime @default(now())
+
+  @@index([experimentId, type])
+  @@index([experimentId, visitorHash, type])
+}
+
+/// Abandoned-cart snapshots (Phase 5, feature 20). The buyer email exists
+/// only as hash + AES-256-GCM ciphertext; the recovery token is stored
+/// hashed (the raw token travels only in the recovery email link).
+model CartSnapshot {
+  id                String    @id @default(cuid())
+  emailHash         String
+  emailCipher       String
+  items             Json // [{ productId, title, priceUSD }]
+  totalUSD          Float
+  locale            String    @default("en")
+  status            String    @default("open") // open | recovered
+  recoveryTokenHash String    @unique
+  recoverySentAt    DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([emailHash, status])
+  @@index([status, createdAt])
+}
+
 /// One-time order claim code (Phase 2). The customer sends this short code to
 /// the store's WhatsApp / Messenger / Instagram to receive download links.
 /// Only the SHA-256 hash of the code is stored; the code itself is shown to
 /// the customer once (success page / receipt email).
+/// Owner notification center events (Phase 6, feature 26). One row per
+/// store event the owner should see (paid order, fraud hold, failed
+/// delivery, pending review, subscription past_due). Detail is a small
+/// JSON summary — never message bodies or raw PII.
+model OwnerEvent {
+  id        String    @id @default(cuid())
+  kind      String // order_paid | fraud_hold | delivery_failed | review_pending | subscription_past_due
+  title     String
+  detail    Json?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([kind, createdAt])
+  @@index([readAt])
+}
+
+/// Privacy-first analytics events (Phase 6, feature 27). NO raw IPs are
+/// ever stored: the visitor id is a daily-rotating salted hash, the
+/// country is a 2-letter code from the platform header, and `day` is the
+/// UTC bucket the aggregations group by.
+model AnalyticsEvent {
+  id          String   @id @default(cuid())
+  type        String // pageview | product_view | add_to_cart | checkout_start | purchase
+  productId   String?
+  path        String?
+  country     String?
+  visitorHash String?
+  day         String // YYYY-MM-DD (UTC)
+  createdAt   DateTime @default(now())
+
+  @@index([day, type])
+  @@index([productId])
+  @@index([createdAt])
+}
+
+/// Web Push subscriptions (Phase 6, feature 28). The endpoint is stored
+/// ONLY as a SHA-256 hash (lookup key) plus AES-256-GCM ciphertext
+/// (src/lib/pii.ts); the subscription keys (p256dh/auth) are ciphertext
+/// too. A 404/410 from the push service deletes the row.
+model PushSubscription {
+  id             String   @id @default(cuid())
+  endpointHash   String   @unique
+  endpointCipher String
+  keysCipher     String
+  createdAt      DateTime @default(now())
+  lastSeenAt     DateTime @updatedAt
+}
+
+/// Team admin accounts (Phase 6, feature 29). Passwords are scrypt
+/// hashes; the TOTP secret is AES-256-GCM ciphertext (key derived from
+/// the admin bootstrap secret — see src/lib/team.ts); backup codes are
+/// SHA-256 hashes, single-use. The ADMIN_PASSWORD env login remains the
+/// bootstrap owner and is NOT a row here.
+model AdminUser {
+  id               String   @id @default(cuid())
+  email            String   @unique
+  passwordHash     String
+  role             String   @default("viewer") // owner | admin | support | viewer
+  totpSecretCipher String?
+  totpEnabled      Boolean  @default(false)
+  totpLastStep     BigInt?
+  backupCodeHashes String[] @default([])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+/// Append-only admin audit log (Phase 6, feature 29). Rows are only ever
+/// created — there is no update/delete path in code. Actor is the admin
+/// email or "bootstrap-owner" for the ADMIN_PASSWORD session.
+model AuditLog {
+  id        String   @id @default(cuid())
+  actor     String
+  role      String
+  action    String
+  target    String   @default("")
+  detail    Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actor])
+}
+
+/// Privacy-center requests (Phase 6, feature 30). The one-time token is
+/// stored ONLY as a SHA-256 hash; the email as hash + AES-256-GCM
+/// ciphertext. Export requests complete on download; deletion requests
+/// complete on the confirmed execute step, which anonymises the email
+/// everywhere while preserving order financial records.
+model PrivacyRequest {
+  id          String    @id @default(cuid())
+  kind        String // export | delete
+  emailHash   String
+  emailCipher String    @default("")
+  tokenHash   String    @unique
+  status      String    @default("pending") // pending | done | expired
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+  executedAt  DateTime?
+
+  @@index([emailHash])
+  @@index([status, expiresAt])
+}
+
 model ClaimCode {
   id         String    @id @default(cuid())
   codeHash   String    @unique
