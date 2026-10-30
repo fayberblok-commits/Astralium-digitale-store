@@ -28,6 +28,7 @@ export default function Footer({ locale, dict }: { locale: string; dict: Dict })
           <Link href={`/${locale}/shop`}>{dict.nav_shop}</Link>
           <Link href={`/${locale}/account`}>{dict.nav_account}</Link>
           <Link href={`/${locale}/cart`}>{dict.nav_cart}</Link>
+          <Link href={`/${locale}/privacy-center`}>{dict.pc_t}</Link>
         </nav>
       </div>
       <p className="footer-base">

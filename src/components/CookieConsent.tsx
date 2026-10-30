@@ -10,6 +10,12 @@ export default function CookieConsent({ dict }: { dict: Dict }) {
   if (!visible) return null;
   const choose = (v: string) => {
     localStorage.setItem("astralium-consent", v);
+    // Phase 6 (features 27/30): mirror the choice into the consent
+    // cookie the analytics endpoint + privacy center read server-side.
+    try {
+      const prefs = JSON.stringify({ analytics: v === "all", marketing: v === "all" });
+      document.cookie = `astralium-consent=${encodeURIComponent(prefs)}; path=/; max-age=${60 * 60 * 24 * 365}; samesite=lax`;
+    } catch { /* cookie write is best-effort */ }
     setVisible(false);
   };
   return (
