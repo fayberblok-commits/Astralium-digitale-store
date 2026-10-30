@@ -1,17 +1,39 @@
 import Link from "next/link";
-import { CATEGORIES, PRODUCTS, BUNDLES, TESTIMONIALS, FAQS, bundleSavings } from "../../data/products";
+import { CATEGORIES, PRODUCTS, TESTIMONIALS, FAQS, bundleSavings } from "../../data/products";
+import { storefrontBundles } from "../../lib/bundles";
 import { getDictionary } from "../../i18n/dictionaries";
 import { currentCurrency } from "../../lib/server";
 import { formatPrice } from "../../lib/currency";
 import ProductCard, { Stars } from "../../components/ProductCard";
 import NewsletterForm from "../../components/NewsletterForm";
 import { AddToCartButton } from "../../components/Buttons";
+import SocialProof from "../../components/SocialProof";
+import AbBeacon from "../../components/AbBeacon";
+import { cookies } from "next/headers";
+import { getFlag } from "../../lib/flags";
+import { AB_SLOT_HERO, AB_VISITOR_COOKIE, getAbConfig, heroHeadlineFor, runningExperimentForSlot } from "../../lib/ab";
 
 export default async function HomePage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   const dict = getDictionary(locale);
   const currency = await currentCurrency(locale);
 
+  // A/B tests (Phase 5, feature 23): the hero headline is the designated
+  // slot. Bucketing is deterministic per anonymous visitor cookie; with
+  // the flag off (or no running experiment / no cookie yet) the
+  // dictionary headline renders exactly as before.
+  const abOn = await getFlag("ab_tests");
+  let heroTitle = dict.hero_title;
+  if (abOn) {
+    const jar = await cookies();
+    const visitorId = jar.get(AB_VISITOR_COOKIE)?.value ?? null;
+    const exp = runningExperimentForSlot(await getAbConfig(), AB_SLOT_HERO);
+    heroTitle = heroHeadlineFor(exp, visitorId) ?? dict.hero_title;
+  }
+
+  // Owner-managed bundles (DB/.data) replace the catalog bundles once
+  // the owner creates one; otherwise the catalog bundles render as before.
+  const BUNDLES = await storefrontBundles();
   const bestsellers = PRODUCTS.filter((p) => p.badge === "bestseller");
   const newReleases = [...PRODUCTS].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)).slice(0, 4);
   const hero = PRODUCTS[0];
@@ -21,7 +43,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
       <section className="hero">
         <div className="hero-frame">
           <p className="hero-kicker">{dict.hero_kicker}</p>
-          <h1>{dict.hero_title}</h1>
+          <h1>{heroTitle}</h1>
           <p>{dict.hero_sub}</p>
           <div className="btn-row" style={{ justifyContent: "center" }}>
             <Link href={`/${locale}/shop`} className="btn btn-primary btn-lg">{dict.hero_cta}</Link>
@@ -144,6 +166,11 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
         <p className="muted">{dict.newsletter_d}</p>
         <NewsletterForm dict={dict} />
       </section>
+
+      {/* Phase 5, feature 24: real-data social proof (renders nothing
+          when the flag is off or no real orders/reviews exist yet). */}
+      <SocialProof locale={locale} dict={dict} />
+      {abOn ? <AbBeacon mode="exposure" /> : null}
     </>
   );
 }

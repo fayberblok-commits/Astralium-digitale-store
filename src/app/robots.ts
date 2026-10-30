@@ -2,6 +2,7 @@ import type { MetadataRoute } from "next";
 import { siteUrl } from "../lib/server";
 
 export default function robots(): MetadataRoute.Robots {
+  const base = siteUrl();
   return {
     rules: [
       {
@@ -10,6 +11,7 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ["/api/", "/*/control-astralium", "/*/checkout", "/*/cart", "/*/success"],
       },
     ],
-    sitemap: `${siteUrl()}/sitemap.xml`,
+    sitemap: `${base}/sitemap.xml`,
+    host: base,
   };
 }

@@ -4,12 +4,16 @@ import "../globals.css";
 import { LOCALE_CODES, isLocale, isRTL, localeInfo } from "../../i18n/locales";
 import { getDictionary } from "../../i18n/dictionaries";
 import { currentCurrency, siteUrl } from "../../lib/server";
+import { getFlag } from "../../lib/flags";
 import { StoreProvider } from "../../lib/store";
 import Header from "../../components/Header";
 import Footer from "../../components/Footer";
 import CookieConsent from "../../components/CookieConsent";
 import ChatWidget from "../../components/ChatWidget";
 import SwRegister from "../../components/SwRegister";
+import RefCapture from "../../components/RefCapture";
+import AnalyticsBeacon from "../../components/AnalyticsBeacon";
+import InstallPrompt from "../../components/InstallPrompt";
 
 export function generateStaticParams() {
   return LOCALE_CODES.map((locale) => ({ locale }));
@@ -31,7 +35,14 @@ export async function generateMetadata({
       canonical: `/${locale}`,
       languages: Object.fromEntries(LOCALE_CODES.map((l) => [l, `/${l}`])),
     },
-    openGraph: { title: "Astralium Digitale Store", description: dict.hero_sub, type: "website" },
+    openGraph: {
+      title: "Astralium Digitale Store",
+      description: dict.hero_sub,
+      type: "website",
+      siteName: "Astralium Digitale Store",
+      locale,
+    },
+    twitter: { card: "summary_large_image", title: "Astralium Digitale Store", description: dict.hero_sub },
   };
 }
 
@@ -49,6 +60,13 @@ export default async function LocaleLayout({
   const dict = getDictionary(locale);
   const currency = await currentCurrency(locale);
   const info = localeInfo(locale);
+  const showBlog = await getFlag("blog");
+  // Phase 6: support v2 (streaming chat), privacy-first analytics, PWA.
+  const [supportV2, analyticsOn, pwaOn] = await Promise.all([
+    getFlag("ai_support_v2"),
+    getFlag("analytics"),
+    getFlag("pwa_push"),
+  ]);
   return (
     <html lang={locale} dir={isRTL(locale) ? "rtl" : "ltr"} suppressHydrationWarning>
       <head>
@@ -71,12 +89,15 @@ export default async function LocaleLayout({
       </head>
       <body>
         <StoreProvider>
-          <Header locale={locale} dict={dict} currency={currency} />
+          <Header locale={locale} dict={dict} currency={currency} showBlog={showBlog} />
           <main>{children}</main>
           <Footer locale={locale} dict={dict} />
           <CookieConsent dict={dict} />
-          <ChatWidget dict={dict} locale={locale} />
-          <SwRegister />
+          <ChatWidget dict={dict} locale={locale} supportV2={supportV2} />
+          <SwRegister enabled={pwaOn} />
+          {pwaOn && <InstallPrompt dict={dict} />}
+          {analyticsOn && <AnalyticsBeacon />}
+          <RefCapture />
         </StoreProvider>
       </body>
     </html>
