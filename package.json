@@ -19,6 +19,7 @@
   "name": "astralium-v2",
   "private": true,
   "scripts": {
+    "prebuild": "node scripts/generate-icons.mjs",
     "build": "next build",
     "dev": "next dev",
     "start": "next start",
