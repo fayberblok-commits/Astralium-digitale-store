@@ -4,13 +4,33 @@ import type { Dict } from "../i18n/dictionaries";
 import { useStore, type OrderRecord } from "../lib/store";
 import { formatPrice } from "../lib/currency";
 import { priceCart } from "../lib/coupons";
+import { normalizePhone, PHONE_COUNTRIES, countryForLocalePhone } from "../lib/phone";
 
-export default function CheckoutClient({ locale, dict, currency }: { locale: string; dict: Dict; currency: string }) {
+type ChannelKey = "email" | "whatsapp" | "messenger" | "instagram";
+
+export default function CheckoutClient({
+  locale,
+  dict,
+  currency,
+  channels,
+}: {
+  locale: string;
+  dict: Dict;
+  currency: string;
+  channels: { key: ChannelKey; available: boolean }[];
+}) {
   const { cart, subtotal, clear, saveOrder } = useStore();
   const [email, setEmail] = useState("");
   const [provider, setProvider] = useState<"stripe" | "paypal">("stripe");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Delivery channel (Phase 2): email default; social channels appear only
+  // when the server says their flag is on AND the provider is configured.
+  const [channel, setChannel] = useState<ChannelKey>("email");
+  const [phone, setPhone] = useState("");
+  const [phoneCountry, setPhoneCountry] = useState(() => countryForLocalePhone(locale));
+  const [optIn, setOptIn] = useState(false);
+  const offered = channels.filter((c) => c.key === "email" || c.available);
 
   const coupon = useMemo(() => {
     try {
@@ -27,6 +47,20 @@ export default function CheckoutClient({ locale, dict, currency }: { locale: str
       setError(dict.newsletter_bad);
       return;
     }
+    // WhatsApp delivery needs a valid E.164 number + explicit opt-in.
+    let phoneE164: string | undefined;
+    if (channel === "whatsapp") {
+      const parsed = normalizePhone(phone, phoneCountry);
+      if (!parsed.ok) {
+        setError(dict.delivery_phone_hint);
+        return;
+      }
+      if (!optIn) {
+        setError(dict.delivery_optin_label);
+        return;
+      }
+      phoneE164 = parsed.e164;
+    }
     setBusy(true);
     setError(null);
     const orderId = `AST-${Date.now().toString(36).toUpperCase()}`;
@@ -41,6 +75,7 @@ export default function CheckoutClient({ locale, dict, currency }: { locale: str
           coupon: coupon?.code,
           locale,
           orderId,
+          delivery: { channel, phoneE164, optIn: channel === "whatsapp" ? optIn : undefined },
         }),
       });
       const data = (await res.json()) as { url?: string; error?: string; sessionId?: string; providerOrderId?: string };
@@ -106,6 +141,55 @@ export default function CheckoutClient({ locale, dict, currency }: { locale: str
               <option value="paypal">PayPal</option>
             </select>
           </label>
+          {offered.length > 1 && (
+            <fieldset style={{ border: "none", padding: 0, margin: 0 }}>
+              <legend style={{ fontWeight: 700, marginBottom: 8 }}>{dict.delivery_title}</legend>
+              <div className="express-row" role="radiogroup" aria-label={dict.delivery_title}>
+                {offered.map((c) => (
+                  <button
+                    key={c.key}
+                    type="button"
+                    role="radio"
+                    aria-checked={channel === c.key}
+                    className="express-btn"
+                    style={channel === c.key ? { outline: "2px solid var(--gold)", outlineOffset: 2 } : undefined}
+                    onClick={() => setChannel(c.key)}
+                  >
+                    {dict[`delivery_channel_${c.key}`]}
+                  </button>
+                ))}
+              </div>
+              <p className="muted">{dict.delivery_hint}</p>
+              {channel === "whatsapp" && (
+                <>
+                  <label>
+                    {dict.delivery_country_label}
+                    <select value={phoneCountry} onChange={(e) => setPhoneCountry(e.target.value)}>
+                      {PHONE_COUNTRIES.map((c) => (
+                        <option key={c.code} value={c.code}>{c.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    {dict.delivery_phone_label}
+                    <input
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="tel"
+                      placeholder="+212 612 345 678"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                    />
+                  </label>
+                  <p className="muted">{dict.delivery_phone_hint}</p>
+                  <label style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                    <input type="checkbox" checked={optIn} onChange={(e) => setOptIn(e.target.checked)} />
+                    <span>{dict.delivery_optin_label}</span>
+                  </label>
+                </>
+              )}
+            </fieldset>
+          )}
           {error && <p className="err-text" role="alert">{error}</p>}
           <button type="button" className="btn btn-primary btn-lg" disabled={busy} onClick={() => pay()}>
             🔒 {busy ? dict.processing : `${dict.pay_btn} · ${formatPrice(totals.total, currency, locale)}`}

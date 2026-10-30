@@ -93,3 +93,34 @@ export const LEGAL_DOCS: LegalDoc[] = [
 export function getLegalDoc(slug: string): LegalDoc | undefined {
   return LEGAL_DOCS.find((d) => d.slug === slug);
 }
+
+/**
+ * "Messaging & delivery privacy" — rendered as an extra section of the
+ * Privacy Policy (Phase 2 social delivery). Native text in English and
+ * Arabic; other locales resolve to the English text (the same fallback
+ * rule as the rest of the storefront).
+ */
+export const MESSAGING_PRIVACY: Record<"en" | "ar", { title: string; body: string[] }> = {
+  en: {
+    title: "Messaging & delivery privacy",
+    body: [
+      "If you choose delivery via WhatsApp, Messenger or Instagram, we process the phone number or platform ID you provide for one purpose only: sending you your download links and helping with that order. We never use it for marketing unless you separately and explicitly opt in.",
+      "Phone numbers are stored encrypted (AES-256-GCM) and indexed only by a one-way hash. They never appear in our logs or admin screens, and raw storage links are never sent — every message carries only our own signed, expiring download links.",
+      "Reply STOP on WhatsApp at any time to opt out of WhatsApp messages immediately; email delivery is unaffected. You may also request deletion of your messaging data at any time via the contact page — we delete the stored number and conversation identifiers, keeping only the order records the law requires us to retain.",
+      "Meta platforms (WhatsApp, Messenger, Instagram) process messages under their own privacy policies when you choose those channels.",
+    ],
+  },
+  ar: {
+    title: "خصوصية المراسلة والتسليم",
+    body: [
+      "إذا اخترت التسليم عبر واتساب أو ماسنجر أو إنستغرام، فإننا نعالج رقم الهاتف أو معرّف المنصة الذي تقدمه لغرض واحد فقط: إرسال روابط التحميل إليك ومساعدتك بشأن ذلك الطلب. لا نستخدمه أبداً في التسويق ما لم توافق على ذلك صراحة وبشكل منفصل.",
+      "تُحفظ أرقام الهواتف مشفّرة (AES-256-GCM) ولا تُفهرس إلا ببصمة أحادية الاتجاه. لا تظهر أبداً في سجلاتنا أو شاشات الإدارة، ولا تُرسَل روابط التخزين الخام أبداً — كل رسالة تحمل فقط روابط التحميل الموقّعة والمنتهية الصلاحية من متجرنا.",
+      "ردّ بكلمة STOP على واتساب في أي وقت لإلغاء رسائل واتساب فوراً؛ ويبقى التسليم بالبريد غير متأثر. يمكنك أيضاً طلب حذف بيانات المراسلة الخاصة بك في أي وقت عبر صفحة الاتصال — نحذف الرقم ومعرّفات المحادثة المحفوظة، مع الاحتفاظ فقط بسجلات الطلبات التي يلزمنا القانون بالاحتفاظ بها.",
+      "تعالج منصات ميتا (واتساب وماسنجر وإنستغرام) الرسائل وفق سياسات الخصوصية الخاصة بها عندما تختار تلك القنوات.",
+    ],
+  },
+};
+
+export function getMessagingPrivacy(locale: string): { title: string; body: string[] } {
+  return locale === "ar" ? MESSAGING_PRIVACY.ar : MESSAGING_PRIVACY.en;
+}

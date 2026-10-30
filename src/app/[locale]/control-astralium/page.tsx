@@ -8,6 +8,7 @@ import { isStorageConfigured } from "../../../services/storage";
 import { isDbConfigured } from "../../../lib/db";
 import ProductFilesManager from "../../../components/ProductFilesManager";
 import FeatureFlagsPanel from "../../../components/FeatureFlagsPanel";
+import DeliveryChannelsPanel from "../../../components/DeliveryChannelsPanel";
 
 export const metadata = { title: "Control", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -138,6 +139,37 @@ export default async function AdminDashboard({ params }: { params: Promise<{ loc
               subscriptions: dict.flag_subscriptions,
               loyalty: dict.flag_loyalty,
               referrals: dict.flag_referrals,
+            },
+          }}
+        />
+      </div>
+
+      <h2>{dict.admin_delivery_title}</h2>
+      <div className="panel">
+        <p className="muted">{dict.admin_delivery_desc}</p>
+        <DeliveryChannelsPanel
+          dict={{
+            channel: dict.admin_delivery_channel,
+            flag: dict.admin_delivery_flag,
+            provider: dict.admin_delivery_provider,
+            ready: dict.admin_delivery_ready,
+            notReady: dict.admin_delivery_not_ready,
+            on: dict.admin_flags_on,
+            off: dict.admin_flags_off,
+            template: dict.admin_delivery_template,
+            templateNote: dict.admin_delivery_template_note,
+            stats: dict.admin_delivery_stats,
+            log: dict.admin_delivery_log,
+            logEmpty: dict.admin_delivery_log_empty,
+            resend: dict.admin_delivery_resend,
+            order: dict.admin_delivery_order,
+            status: dict.admin_delivery_status,
+            when: dict.admin_delivery_when,
+            labels: {
+              email: dict.delivery_channel_email,
+              whatsapp: dict.delivery_channel_whatsapp,
+              messenger: dict.delivery_channel_messenger,
+              instagram: dict.delivery_channel_instagram,
             },
           }}
         />

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import { getProductById, getBundleById } from "../../../data/products";
 import { applyCoupon } from "../../../lib/coupons";
+import { recordConsent } from "../../../lib/pii";
+import { normalizePhone } from "../../../lib/phone";
 import { siteUrl } from "../../../lib/server";
 
 export const runtime = "nodejs";
@@ -26,6 +29,7 @@ export async function POST(req: NextRequest) {
     coupon?: string;
     locale?: string;
     orderId?: string;
+    delivery?: { channel?: string; phoneE164?: string; optIn?: boolean };
   } | null;
   if (!body || !Array.isArray(body.items) || body.items.length === 0) {
     return NextResponse.json({ error: "EMPTY_CART" }, { status: 400 });
@@ -36,6 +40,27 @@ export async function POST(req: NextRequest) {
   }
   const locale = body.locale && body.locale.length <= 10 ? body.locale : "en";
   const orderId = (body.orderId ?? `AST-${Date.now().toString(36).toUpperCase()}`).slice(0, 40);
+
+  // Delivery channel (Phase 2). WhatsApp requires a valid E.164 number and
+  // an explicit opt-in; the consent is recorded now (subject stored only as
+  // hash + AES-GCM ciphertext — see lib/pii.ts) and ONLY the hash travels
+  // into Stripe metadata. Messenger/Instagram cannot be initiated by the
+  // store, so the choice is recorded and fulfilled via the claim flow.
+  const deliveryChannel = ["email", "whatsapp", "messenger", "instagram"].includes(body.delivery?.channel ?? "")
+    ? (body.delivery!.channel as string)
+    : "email";
+  let deliverySubjectHash: string | undefined;
+  if (deliveryChannel === "whatsapp") {
+    if (body.delivery?.optIn !== true) {
+      return NextResponse.json({ error: "WHATSAPP_OPTIN_REQUIRED" }, { status: 400 });
+    }
+    const parsed = normalizePhone(body.delivery?.phoneE164 ?? "");
+    if (!parsed.ok) {
+      return NextResponse.json({ error: "INVALID_PHONE" }, { status: 400 });
+    }
+    await recordConsent({ subject: parsed.e164, channel: "whatsapp", granted: true });
+    deliverySubjectHash = createHash("sha256").update(parsed.e164).digest("hex");
+  }
 
   // Resolve items server-side (client prices are never trusted). Bundles
   // stay a single line at the bundle price; their products are recorded
@@ -82,6 +107,8 @@ export async function POST(req: NextRequest) {
     form.set("cancel_url", `${base}/${locale}/checkout`);
     form.set("metadata[order_id]", orderId);
     form.set("metadata[product_ids]", productIds.join(","));
+    form.set("metadata[delivery_channel]", deliveryChannel);
+    if (deliverySubjectHash) form.set("metadata[delivery_subject_hash]", deliverySubjectHash);
     form.set("payment_method_types[0]", "card");
     form.set("payment_method_types[1]", "link");
     // One aggregated line keeps Stripe Tax/coupons simple in this release;

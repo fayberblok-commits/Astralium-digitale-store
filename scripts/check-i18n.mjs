@@ -26,10 +26,23 @@ const NEW_KEYS = [
   "flag_delivery_email", "flag_delivery_whatsapp", "flag_delivery_messenger",
   "flag_delivery_instagram", "flag_social_proof", "flag_ai_support_v2", "flag_subscriptions",
   "flag_loyalty", "flag_referrals",
+  // Phase 2: delivery channels (checkout choice, success page, admin section)
+  "delivery_title", "delivery_hint", "delivery_channel_email", "delivery_channel_whatsapp",
+  "delivery_channel_messenger", "delivery_channel_instagram", "delivery_phone_label",
+  "delivery_phone_hint", "delivery_optin_label", "delivery_country_label",
+  "success_receive_title", "success_receive_whatsapp", "success_receive_messenger",
+  "success_receive_instagram", "success_email_btn", "success_email_sent",
+  "success_claim_label", "success_claim_hint",
+  "admin_delivery_title", "admin_delivery_desc", "admin_delivery_channel",
+  "admin_delivery_flag", "admin_delivery_provider", "admin_delivery_ready",
+  "admin_delivery_not_ready", "admin_delivery_template", "admin_delivery_template_note",
+  "admin_delivery_stats", "admin_delivery_log", "admin_delivery_log_empty",
+  "admin_delivery_resend", "admin_delivery_order", "admin_delivery_status",
+  "admin_delivery_when",
 ];
 
 let failed = false;
-console.log(`Checking ${NEW_KEYS.length} Phase-1 keys across ${LOCALES.length} locales\n`);
+console.log(`Checking ${NEW_KEYS.length} Phase-1+2 keys across ${LOCALES.length} locales\n`);
 console.log("locale        native  fallback  unresolved");
 for (const { code } of LOCALES) {
   const resolved = getDictionary(code);

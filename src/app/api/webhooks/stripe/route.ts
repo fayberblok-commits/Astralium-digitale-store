@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createDownloadToken } from "../../../../lib/tokens";
+import { findSubjectByHash } from "../../../../lib/pii";
+import { deliverOrder } from "../../../../services/delivery";
 import { sendEmail, receiptEmailHtml } from "../../../../services/email";
 import { getProductById } from "../../../../data/products";
 import { siteUrl } from "../../../../lib/server";
@@ -69,7 +71,25 @@ export async function POST(req: NextRequest) {
         downloadUrl: `${siteUrl()}/api/download/${createDownloadToken(p.id, orderId)}`,
       }));
     console.log(JSON.stringify({ event: "order.fulfilled", orderId, email, productIds, via: "stripe-webhook", eventId: event.id }));
-    if (email && links.length > 0) {
+    // Phase 2: proactive WhatsApp delivery when the customer chose it at
+    // checkout and opted in. Stripe metadata carries only the subject
+    // HASH; the phone is recovered from its encrypted consent record.
+    // deliverOrder owns the flow incl. automatic email fallback, so the
+    // plain receipt email below is skipped in that case (no duplicates).
+    const deliveryChannel = metadata.delivery_channel;
+    let socialHandled = false;
+    if (deliveryChannel === "whatsapp" && metadata.delivery_subject_hash && productIds.length > 0) {
+      const phone = await findSubjectByHash(metadata.delivery_subject_hash, "whatsapp");
+      if (phone) {
+        const outcome = await deliverOrder(
+          { orderId, email: email || null, phoneE164: phone, productIds },
+          "whatsapp",
+        );
+        socialHandled = true;
+        console.log(JSON.stringify({ event: "order.social-delivery", orderId, deliveredVia: outcome.deliveredVia, fellBack: outcome.fellBack }));
+      }
+    }
+    if (!socialHandled && email && links.length > 0) {
       const total = productIds.reduce((s, pid) => s + (getProductById(pid)?.priceUSD ?? 0), 0);
       await sendEmail({
         to: email,

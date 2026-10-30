@@ -35,6 +35,20 @@ export function flagDef(key: string): FlagDef | undefined {
   return FLAG_REGISTRY.find((f) => f.key === key);
 }
 
+/**
+ * Bootstrap/test override: FLAG_<KEY>=1|0 in the environment. Consulted
+ * only when no DB row exists (the DB remains the owner's source of truth),
+ * so a flag can be enabled for a first boot or in automated tests without
+ * a database. Unset/invalid values are ignored.
+ */
+export function envFlagOverride(key: string): boolean | undefined {
+  const raw = process.env[`FLAG_${key.toUpperCase()}`];
+  if (raw === undefined) return undefined;
+  if (["1", "true", "on"].includes(raw.toLowerCase())) return true;
+  if (["0", "false", "off"].includes(raw.toLowerCase())) return false;
+  return undefined;
+}
+
 export async function getFlag(key: string): Promise<boolean> {
   const def = flagDef(key);
   if (!def) return false;
@@ -47,7 +61,7 @@ export async function getFlag(key: string): Promise<boolean> {
   } catch {
     // DB hiccup must never break the storefront — fall through to default.
   }
-  return def.defaultEnabled;
+  return envFlagOverride(key) ?? def.defaultEnabled;
 }
 
 export interface FlagState {

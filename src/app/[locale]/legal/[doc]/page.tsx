@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { LEGAL_DOCS, getLegalDoc } from "../../../../data/legal";
+import { LEGAL_DOCS, getLegalDoc, getMessagingPrivacy } from "../../../../data/legal";
 import { getDictionary } from "../../../../i18n/dictionaries";
 import { LOCALE_CODES } from "../../../../i18n/locales";
 
@@ -35,6 +35,18 @@ export default async function LegalPage({
       {found.body.map((p, i) => (
         <p key={i}>{p}</p>
       ))}
+      {doc === "privacy" &&
+        (() => {
+          const mp = getMessagingPrivacy(locale);
+          return (
+            <section>
+              <h2>{mp.title}</h2>
+              {mp.body.map((p, i) => (
+                <p key={i}>{p}</p>
+              ))}
+            </section>
+          );
+        })()}
     </article>
   );
 }

@@ -69,6 +69,21 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): EnvCheck {
     warnings.push("DOWNLOAD_SIGNING_SECRET is shorter than 32 characters — use a longer random string.");
   }
 
+  // ── Social delivery (Phase 2): partial groups warn, never error ────────
+  const waKeys = ["WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_BUSINESS_NUMBER"] as const;
+  const waPresent = waKeys.filter(present);
+  if (waPresent.length > 0 && waPresent.length < waKeys.length) {
+    warnings.push(`WhatsApp delivery is partially configured (missing: ${waKeys.filter((k) => !present(k)).join(", ")}) — the channel stays hidden until the group is complete.`);
+  }
+  const metaKeys = ["META_APP_SECRET", "META_PAGE_ID", "META_PAGE_ACCESS_TOKEN", "INSTAGRAM_USERNAME", "INSTAGRAM_ACCESS_TOKEN"] as const;
+  const metaPresent = metaKeys.filter(present);
+  if (metaPresent.length > 0 && metaPresent.length < metaKeys.length) {
+    warnings.push(`Meta delivery is partially configured (missing: ${metaKeys.filter((k) => !present(k)).join(", ")}) — Messenger/Instagram delivery stays hidden until the group is complete.`);
+  }
+  if (present("PII_ENCRYPTION_KEY") && env.PII_ENCRYPTION_KEY!.length < 16) {
+    warnings.push("PII_ENCRYPTION_KEY is shorter than 16 characters — phone encryption for delivery stays disabled.");
+  }
+
   const on = (label: string, ok: boolean) => `${ok ? "on " : "off"}  ${label}`;
   const summary = [
     "[astralium] environment summary:",
@@ -78,6 +93,9 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): EnvCheck {
     `  ${on("PayPal", present("PAYPAL_CLIENT_ID") && present("PAYPAL_CLIENT_SECRET"))}`,
     `  ${on("email (Resend)", present("RESEND_API_KEY"))}`,
     `  ${on("admin", present("ADMIN_PASSWORD") && env.ADMIN_PASSWORD!.length >= 8)}`,
+    `  ${on("WhatsApp delivery", waPresent.length === waKeys.length)}`,
+    `  ${on("Messenger/Instagram delivery", metaPresent.length === metaKeys.length)}`,
+    `  ${on("PII encryption", present("PII_ENCRYPTION_KEY"))}`,
   ];
   return { errors, warnings, summary };
 }

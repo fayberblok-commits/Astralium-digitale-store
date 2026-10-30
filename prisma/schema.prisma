@@ -41,12 +41,17 @@ model Order {
   currency    String   @default("USD")
   provider    String // stripe | paypal
   providerRef String   @unique // provider session/order id — idempotency anchor
+  /// Delivery channel chosen at checkout (Phase 2): email | whatsapp | messenger | instagram
+  deliveryChannel String?
+  /// SHA-256 hash of the delivery subject (phone/PSID) — raw PII never stored here.
+  deliverySubjectHash String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   items           OrderItem[]
   deliveryAttempts DeliveryAttempt[]
   downloadGrants  DownloadGrant[]
+  claimCodes      ClaimCode[]
 }
 
 model OrderItem {
@@ -70,12 +75,19 @@ model DeliveryAttempt {
   /// Provider error code only — never message bodies or recipient secrets.
   errorCode      String?
   idempotencyKey String   @unique
+  /// Logical grant this attempt belongs to (orderId+items digest) — part of
+  /// the idempotency story: one successful send per (orderId, channel, grantId).
+  grantId        String?
+  /// Provider-side message id (wamid / mid) used to correlate status webhooks.
+  providerRef    String?
   createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
   @@index([channel, status])
+  @@index([providerRef])
 }
 
 model Setting {
@@ -112,9 +124,35 @@ model ConsentRecord {
   id          String   @id @default(cuid())
   /// SHA-256 hash of the subject identifier (email/phone) — raw PII is not stored here.
   subjectHash String
+  /// AES-256-GCM ciphertext of the subject (e.g. phone in E.164) — set only
+  /// when PII_ENCRYPTION_KEY is configured and delivery needs the value.
+  /// Ciphertext only; never plaintext, never logged. See src/lib/pii.ts.
+  subjectCipher String?
   channel     String // email | whatsapp | messenger | instagram | push
   granted     Boolean
   createdAt   DateTime @default(now())
 
   @@index([subjectHash])
+}
+
+/// One-time order claim code (Phase 2). The customer sends this short code to
+/// the store's WhatsApp / Messenger / Instagram to receive download links.
+/// Only the SHA-256 hash of the code is stored; the code itself is shown to
+/// the customer once (success page / receipt email).
+model ClaimCode {
+  id         String    @id @default(cuid())
+  codeHash   String    @unique
+  orderId    String
+  /// Products this code unlocks (snapshot of the order's items).
+  productIds String[]
+  /// Channel the code was issued for, when known (null = any channel).
+  channel    String?
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([expiresAt])
 }
