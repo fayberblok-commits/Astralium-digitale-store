@@ -3,6 +3,7 @@ import { requireAdmin, type Permission } from "../../../../lib/team";
 import {
   computeResults, getAbConfig, listAbEvents, sanitizeAbConfig, setAbConfig,
 } from "../../../../lib/ab";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -34,7 +35,12 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const denied = await guard(req, "content");
   if (denied) return denied;
-  const body = (await req.json().catch(() => null)) as { config?: unknown } | null;
+  let body: { config?: unknown } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body) return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   const { persisted, value } = await setAbConfig(sanitizeAbConfig(body.config));
   return NextResponse.json({ ok: true, persisted, config: value });
