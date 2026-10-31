@@ -17,7 +17,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { getDb } from "./db.ts";
-import { PRODUCTS, getProductBySlug, type Product } from "../data/products.ts";
+import { PRODUCTS } from "../data/products.ts";
 import { encryptPii, decryptPii, hashSubject, piiConfigured } from "./pii.ts";
 import { sendEmail } from "../services/email.ts";
 
