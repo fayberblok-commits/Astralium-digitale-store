@@ -3,6 +3,7 @@ import { requireAdmin, type Permission } from "../../../../lib/team";
 import {
   campaignState, deleteFlashSale, listFlashSales, saveFlashSale, type FlashSaleInput,
 } from "../../../../lib/flash-sales";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -28,7 +29,12 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const denied = await guard(req, "commerce");
   if (denied) return denied;
-  const body = (await req.json().catch(() => null)) as { sale?: FlashSaleInput } | null;
+  let body: { sale?: FlashSaleInput } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.sale) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
