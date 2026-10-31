@@ -6,8 +6,8 @@ delete process.env.DATABASE_URL;
 
 const { FLAG_REGISTRY, flagDef, getFlag, listFlags, setFlag } = await import("../src/lib/flags.ts");
 
-test("registry: 35 flags; safe features on, money/messaging default off", () => {
-  assert.equal(FLAG_REGISTRY.length, 35);
+test("registry: 37 flags; safe features on, money/messaging default off", () => {
+  assert.equal(FLAG_REGISTRY.length, 37);
   const onByDefault = FLAG_REGISTRY.filter((f) => f.defaultEnabled).map((f) => f.key);
   assert.deepEqual(onByDefault, [
     "delivery_email",
@@ -50,7 +50,7 @@ test("getFlag without DB returns registry defaults; unknown key is false", async
 test("listFlags without DB: dbConfigured=false, persisted=false, defaults applied", async () => {
   const { dbConfigured, flags } = await listFlags();
   assert.equal(dbConfigured, false);
-  assert.equal(flags.length, 35);
+  assert.equal(flags.length, 37);
   for (const f of flags) {
     assert.equal(f.persisted, false);
     assert.equal(f.enabled, f.defaultEnabled);
