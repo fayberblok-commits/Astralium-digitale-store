@@ -1,8 +1,10 @@
+import { STRIPE_API_VERSION } from "../../../lib/stripe";
 import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../lib/flags";
 import { getOfferConfig, buildUpsellCheckoutParams } from "../../../lib/offers";
 import { getProductById } from "../../../data/products";
 import { siteUrl } from "../../../lib/server";
+import { httpErrorResponse, readJsonBody } from "../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -17,12 +19,17 @@ export async function POST(req: NextRequest) {
   if (!(await getFlag("order_bump"))) {
     return NextResponse.json({ error: "FEATURE_DISABLED" }, { status: 403 });
   }
-  const body = (await req.json().catch(() => null)) as {
+  let body: {
     productId?: string; // the PURCHASED product whose config defines the upsell
     email?: string;
     orderId?: string;
     locale?: string;
   } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.productId || !body.email || !body.orderId) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
@@ -48,7 +55,7 @@ export async function POST(req: NextRequest) {
   });
   const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
     method: "POST",
-    headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`, "Stripe-Version": STRIPE_API_VERSION, "Content-Type": "application/x-www-form-urlencoded" },
     body: form,
   });
   const session = (await res.json()) as { id?: string; url?: string; error?: { message?: string } };
