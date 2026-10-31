@@ -69,7 +69,10 @@ export default function CartClient({ locale, dict, currency }: { locale: string;
           </div>
         ))}
       </div>
-      <div className="panel">
+      {/* Phase 3 upgrade: on mobile this summary docks as a bottom
+          sheet above the bottom nav (CSS), so totals + checkout stay
+          in thumb reach while the items scroll. */}
+      <div className="panel cart-summary">
         <div className="coupon-row">
           <input
             value={code}
@@ -98,7 +101,7 @@ export default function CartClient({ locale, dict, currency }: { locale: string;
           <p className="summary-row"><span>{dict.byo_discount_label}</span><span>−{formatPrice(byo.discountUSD, currency, locale)}</span></p>
         )}
         <p className="summary-row summary-total"><span>{dict.cart_total}</span><span>{formatPrice(totals.total, currency, locale)}</span></p>
-        <Link href={`/${locale}/checkout`} className="btn btn-primary btn-lg" style={{ width: "100%" }}>
+        <Link href={`/${locale}/checkout`} className="btn btn-grad btn-lg" style={{ width: "100%" }}>
           {dict.go_checkout}
         </Link>
         <p className="muted">{dict.free_returns_note}</p>
