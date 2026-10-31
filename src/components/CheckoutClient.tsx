@@ -443,7 +443,7 @@ export default function CheckoutClient({
             </fieldset>
           )}
           {error && <p className="err-text" role="alert">{error}</p>}
-          <button type="button" className="btn btn-primary btn-lg" disabled={busy} onClick={() => pay()}>
+          <button type="button" className="btn btn-grad btn-lg" disabled={busy} data-loading={busy || undefined} onClick={() => pay()}>
             🔒 {busy ? dict.processing : `${dict.pay_btn} · ${formatPrice(totals.total, currency, locale)}`}
           </button>
           <p className="muted">Visa · Mastercard · Amex · Apple Pay · Google Pay · Link · iDEAL · SEPA · PayPal — {dict.trust_secure}</p>
