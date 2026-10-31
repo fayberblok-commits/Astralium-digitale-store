@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "../../../services/email";
+import { getClientIp, httpErrorResponse, readJsonBody } from "../../../lib/http";
+import { rateLimiters, tooManyRequests } from "../../../lib/ratelimit";
+import { captchaGate } from "../../../lib/captcha";
+import { z } from "zod";
 
 export const runtime = "nodejs";
+
+const bodySchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(254),
+  captchaToken: z.string().max(4096).optional(),
+}).strict();
 
 /**
  * Newsletter signup: validates the email, sends the welcome email via the
@@ -10,11 +19,26 @@ export const runtime = "nodejs";
  * (Resend Audiences / ConvertKit…) plugs in here later.
  */
 export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => null)) as { email?: string } | null;
-  const email = (body?.email ?? "").trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 254) {
+  // §1: per-IP and per-email budgets (independent of each other).
+  const ip = getClientIp(req);
+  const ipCheck = rateLimiters.newsletterIp.check(`ip:${ip}`);
+  if (!ipCheck.allowed) return tooManyRequests(ipCheck);
+  let raw: unknown;
+  try {
+    raw = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
+  const parsed = bodySchema.safeParse(raw);
+  if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "INVALID_EMAIL" }, { status: 400 });
   }
+  const email = parsed.data.email;
+  const emailCheck = rateLimiters.emailFlow.check(`email:${email}`);
+  if (!emailCheck.allowed) return tooManyRequests(emailCheck);
+  // §10: captcha when configured (no-op + one-time log line when not).
+  const captchaBlock = await captchaGate(parsed.data.captchaToken, ip);
+  if (captchaBlock) return captchaBlock;
   const result = await sendEmail({
     to: email,
     subject: "Welcome to Astralium — one beautiful email a month",
