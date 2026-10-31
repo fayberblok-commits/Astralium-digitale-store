@@ -8,6 +8,9 @@ import { isOrderHeld } from "../../../../lib/fraud";
 import { fetchStampedPdf, watermarkLine } from "../../../../lib/watermark";
 import { getDb } from "../../../../lib/db";
 import { isStorageConfigured, presignGet } from "../../../../services/storage";
+// Phase 1 upgrade (F1/§8): ledger grants are the revocable, counted
+// enforcement layer on top of the signed token.
+import { consumeGrantDownload, getGrantByToken } from "../../../../lib/orders";
 
 export const runtime = "nodejs";
 
@@ -71,6 +74,21 @@ export async function GET(
   if (await getFlag("fraud_shield")) {
     if (await isOrderHeld(result.payload.oid)) {
       return NextResponse.json({ error: "ORDER_HELD" }, { status: 403 });
+    }
+  }
+  // Ledger grant enforcement (F1/§8): when this token was issued as a
+  // grant, a revocation (refund/dispute) or an exhausted download cap
+  // refuses the download even though the token itself still verifies.
+  // Tokens without a grant row (issued before the ledger) keep the
+  // token's own embedded expiry/cap semantics.
+  const grant = await getGrantByToken(decodeURIComponent(token)).catch(() => null);
+  if (grant) {
+    if (grant.revokedAt) {
+      return NextResponse.json({ error: "GRANT_REVOKED" }, { status: 403 });
+    }
+    const counted = await consumeGrantDownload(grant).catch(() => true);
+    if (!counted) {
+      return NextResponse.json({ error: "DOWNLOAD_LIMIT_REACHED" }, { status: 403 });
     }
   }
   // Real file bound? Redirect to a short-lived presigned URL.
