@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { recordAudit, requireAdmin, type Permission } from "../../../../lib/team";
 import { listPendingReviews, moderateReview } from "../../../../lib/reviews";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -29,7 +30,12 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireAdmin(req, "moderate");
   if ("error" in auth) return auth.error;
-  const body = (await req.json().catch(() => null)) as { id?: string; action?: string } | null;
+  let body: { id?: string; action?: string } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.id || (body.action !== "approve" && body.action !== "reject")) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
