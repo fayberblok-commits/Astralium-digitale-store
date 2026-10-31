@@ -4,6 +4,7 @@ import {
   consumePrivacyRequest, executeDeletion, requestEmail, resolvePrivacyRequest,
 } from "../../../../lib/privacy";
 import { recordAudit } from "../../../../lib/team";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -18,7 +19,12 @@ export async function POST(req: NextRequest) {
   if (!(await getFlag("privacy_center"))) {
     return NextResponse.json({ error: "FEATURE_DISABLED" }, { status: 403 });
   }
-  const body = (await req.json().catch(() => null)) as { token?: string; confirm?: boolean } | null;
+  let body: { token?: string; confirm?: boolean } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.token || body.confirm !== true) {
     return NextResponse.json({ error: "CONFIRMATION_REQUIRED" }, { status: 400 });
   }
@@ -33,7 +39,7 @@ export async function POST(req: NextRequest) {
   }
   const summary = await executeDeletion(email);
   await recordAudit({
-    actor: { actor: "privacy-center", role: "owner", via: "password", userId: null },
+    actor: { actor: "privacy-center", role: "owner", via: "password", userId: null, scope: "full", epoch: 0 },
     action: "privacy.deletion.executed",
     target: summary.dbMode ? "db+file stores" : "file stores",
     detail: { ...summary },
