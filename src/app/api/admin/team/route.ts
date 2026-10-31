@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   confirmTotpEnrollment, createUser, deleteUser, disableTotp, isRole, listUsers,
-  publicUser, recordAudit, requireAdmin, setUserRole, startTotpEnrollment,
+  publicUser, recordAudit, requireAdmin, requireStepUp, setUserRole, startTotpEnrollment,
 } from "../../../../lib/team";
 import { getFlag } from "../../../../lib/flags";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -23,15 +24,20 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => null)) as
-    | { action?: string; id?: string; email?: string; password?: string; role?: string; code?: string }
-    | null;
+  let body: { action?: string; id?: string; email?: string; password?: string; role?: string; code?: string } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.action) return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
 
   // Self-service enrollment actions: the target must be the caller, or
   // the caller holds the "team" permission.
   if (body.action === "enrollStart" || body.action === "enrollConfirm" || body.action === "disableTotp") {
-    const selfAuth = await requireAdmin(req, "read");
+    // "self" permission: also reachable by setup-scope sessions (TOTP
+    // not yet enrolled) — enrollment is precisely what they must do.
+    const selfAuth = await requireAdmin(req, "self");
     if ("error" in selfAuth) return selfAuth.error;
     const actor = selfAuth.actor;
     const targetId = body.id ?? actor.userId ?? "";
@@ -65,6 +71,12 @@ export async function POST(req: NextRequest) {
   const auth = await requireAdmin(req, "team");
   if ("error" in auth) return auth.error;
   const actor = auth.actor;
+
+  // Step-up (Phase 1 upgrade, §4): creating accounts, changing roles and
+  // deleting accounts are sensitive — a fresh re-auth (password + TOTP,
+  // ≤5 min old, via POST /api/admin/step-up) is required.
+  const step = await requireStepUp(req, actor);
+  if ("error" in step) return step.error;
 
   if (body.action === "create") {
     if (!body.email || !body.password || !isRole(body.role)) {
