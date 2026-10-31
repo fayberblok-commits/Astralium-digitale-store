@@ -4,6 +4,7 @@ import { getProductById } from "../../../../data/products";
 import { listStoredBundles, saveStoredBundle, deleteStoredBundle } from "../../../../lib/bundles";
 import { computeBundlePrice } from "../../../../lib/byo";
 import { PRODUCTS } from "../../../../data/products";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -32,10 +33,15 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const denied = await guard(req, "content");
   if (denied) return denied;
-  const body = (await req.json().catch(() => null)) as {
+  let body: {
     id?: string; title?: string; description?: string;
     productIds?: string[]; discountPercent?: number; active?: boolean;
   } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.title || !Array.isArray(body.productIds) || body.productIds.length < 2) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
