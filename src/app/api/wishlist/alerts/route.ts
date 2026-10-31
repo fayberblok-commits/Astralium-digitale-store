@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../../lib/flags";
 import { registerAlert } from "../../../../lib/wishlist-alerts";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -15,9 +16,14 @@ export async function POST(req: NextRequest) {
   if (!(await getFlag("wishlist_alerts"))) {
     return NextResponse.json({ error: "FEATURE_DISABLED" }, { status: 403 });
   }
-  const body = (await req.json().catch(() => null)) as {
+  let body: {
     email?: string; productId?: string; optIn?: boolean;
   } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.email || !body?.productId) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
