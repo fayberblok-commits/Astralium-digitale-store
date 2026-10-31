@@ -66,6 +66,38 @@ export function formatPrice(amountUSD: number, currency: string, locale: string)
   }
 }
 
+/** Format an amount that is ALREADY denominated in `currency` (no conversion). */
+export function formatAmountInCurrency(amount: number, currency: string, locale: string): string {
+  try {
+    return new Intl.NumberFormat(locale === "en" ? "en-US" : locale, {
+      style: "currency",
+      currency,
+      currencyDisplay: "narrowSymbol",
+    }).format(amount);
+  } catch {
+    return `${amount.toFixed(2)} ${currency}`;
+  }
+}
+
+/**
+ * A product's display price (Phase 4 upgrade): when the owner pinned a
+ * per-currency price for the visitor's currency, that exact amount is
+ * shown (it is denominated in that currency); otherwise the USD price
+ * is converted at the snapshot rate, as before. Checkout settlement
+ * remains USD in this release — see docs and the Phase-4 report.
+ */
+export function formatProductPrice(
+  product: { priceUSD: number; priceOverrides?: Record<string, number> },
+  currency: string,
+  locale: string,
+): string {
+  const pinned = product.priceOverrides?.[currency];
+  if (typeof pinned === "number" && Number.isFinite(pinned)) {
+    return formatAmountInCurrency(pinned, currency, locale);
+  }
+  return formatPrice(product.priceUSD, currency, locale);
+}
+
 /** Guess a sensible default currency from a locale (manual switcher overrides). */
 export function currencyForLocale(locale: string): string {
   const map: Record<string, string> = {
