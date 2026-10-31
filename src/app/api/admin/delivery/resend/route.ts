@@ -3,6 +3,7 @@ import { requireAdmin } from "../../../../../lib/team";
 import { getDb } from "../../../../../lib/db";
 import { deliverOrder } from "../../../../../services/delivery";
 import type { DeliveryChannelKey } from "../../../../../services/delivery/types";
+import { httpErrorResponse, readJsonBody } from "../../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -18,12 +19,17 @@ const CHANNEL_SET = new Set(["email", "whatsapp", "messenger", "instagram"]);
 export async function POST(req: NextRequest) {
   const auth = await requireAdmin(req, "support_ops");
   if ("error" in auth) return auth.error;
-  const body = (await req.json().catch(() => null)) as {
+  let body: {
     orderId?: string;
     channel?: string;
     email?: string;
     productIds?: string[];
   } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.orderId || !body.channel || !CHANNEL_SET.has(body.channel)) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
