@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, type Permission } from "../../../../lib/team";
 import { deleteBlogPost, listBlogPosts, saveBlogPost } from "../../../../lib/blog";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -24,7 +25,12 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const denied = await guard(req, "content");
   if (denied) return denied;
-  const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
+  let body: Record<string, unknown> | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body) return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   const result = await saveBlogPost(body);
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
