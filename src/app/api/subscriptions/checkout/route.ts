@@ -1,3 +1,4 @@
+import { STRIPE_API_VERSION } from "../../../../lib/stripe";
 import { NextRequest, NextResponse } from "next/server";
 import { getProductById } from "../../../../data/products";
 import { getFlag } from "../../../../lib/flags";
@@ -5,6 +6,7 @@ import { siteUrl } from "../../../../lib/server";
 import {
   buildSubscriptionCheckoutParams, getPlanConfig, subscriptionsDbAvailable,
 } from "../../../../lib/subscriptions";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -31,7 +33,12 @@ export async function POST(req: NextRequest) {
       { status: 503 },
     );
   }
-  const body = (await req.json().catch(() => null)) as { productId?: string; email?: string; locale?: string } | null;
+  let body: { productId?: string; email?: string; locale?: string } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   const email = (body?.email ?? "").trim();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return NextResponse.json({ error: "INVALID_EMAIL" }, { status: 400 });
@@ -48,7 +55,7 @@ export async function POST(req: NextRequest) {
   });
   const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
     method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { Authorization: `Bearer ${key}`, "Stripe-Version": STRIPE_API_VERSION, "Content-Type": "application/x-www-form-urlencoded" },
     body: form,
   });
   const session = (await res.json()) as { id?: string; url?: string; error?: { message?: string } };
