@@ -34,6 +34,8 @@ export default async function CheckoutPage({ params }: { params: Promise<{ local
     loyalty: loyaltyOn,
     expressStripe: expressOn && Boolean(process.env.STRIPE_SECRET_KEY && process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY),
     expressPaypal: expressOn && Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET),
+    stripeConfigured: Boolean(process.env.STRIPE_SECRET_KEY),
+    paypalConfigured: Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET),
   };
   return (
     <>
