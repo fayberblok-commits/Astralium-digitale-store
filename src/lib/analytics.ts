@@ -36,8 +36,61 @@ export interface AnalyticsEventRecord {
   path: string | null;
   country: string | null;
   visitorHash: string | null;
+  // Manager's Office dimensions (Phase 4 upgrade): coarse classes only.
+  device: string | null; // mobile | tablet | desktop | bot | null (legacy rows)
+  browser: string | null; // Chrome | Safari | Firefox | Edge | Opera | Other | null
+  source: string | null; // utm_source | referrer host | "direct" | null
   day: string; // YYYY-MM-DD (UTC)
   createdAt: string;
+}
+
+// ─── Dimensions (pure) ───────────────────────────────────────────────────────
+
+export type DeviceClass = "mobile" | "tablet" | "desktop" | "bot";
+
+/**
+ * Coarse device/browser classes from a User-Agent string. The raw UA is
+ * NEVER stored — only these classes reach the event record. Order
+ * matters: bots first, then tablets (several tablet UAs also say
+ * "Mobile"), then the browser families (Edge/Opera UAs contain
+ * "Chrome", Chrome UAs contain "Safari").
+ */
+export function parseUserAgent(ua: string | null | undefined): { device: DeviceClass; browser: string } {
+  const s = (ua ?? "").slice(0, 400);
+  if (!s) return { device: "desktop", browser: "Other" };
+  if (/bot|crawl|spider|slurp|bingpreview|facebookexternalhit|headless/i.test(s)) {
+    return { device: "bot", browser: "Other" };
+  }
+  let device: DeviceClass = "desktop";
+  if (/ipad|tablet|playbook|silk|kindle|tab(?!let browser)/i.test(s) || (/android/i.test(s) && !/mobile/i.test(s))) {
+    device = "tablet";
+  } else if (/mobi|iphone|ipod|android.*mobile|windows phone|blackberry/i.test(s)) {
+    device = "mobile";
+  }
+  let browser = "Other";
+  if (/edg(a|ios)?\//i.test(s)) browser = "Edge";
+  else if (/opr\/|opera/i.test(s)) browser = "Opera";
+  else if (/firefox\//i.test(s)) browser = "Firefox";
+  else if (/chrome\/|crios\//i.test(s)) browser = "Chrome";
+  else if (/safari\//i.test(s)) browser = "Safari";
+  return { device, browser };
+}
+
+/**
+ * Traffic source for one event: an explicit utm_source wins (strictly
+ * sanitized), else the referrer's host when it is not our own host,
+ * else "direct". Returns null when nothing trustworthy is known.
+ */
+export function trafficSource(input: { utmSource?: unknown; referrerHost?: unknown; ownHost?: string | null }): string | null {
+  if (typeof input.utmSource === "string") {
+    const clean = input.utmSource.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 40);
+    if (clean) return clean;
+  }
+  if (typeof input.referrerHost === "string") {
+    const host = input.referrerHost.trim().toLowerCase().slice(0, 100);
+    if (/^[a-z0-9.-]+\.[a-z]{2,}$/.test(host) && host !== (input.ownHost ?? "")) return host;
+  }
+  return "direct";
 }
 
 const STORE_PATH = path.join(process.cwd(), ".data", "analytics-events.json");
@@ -122,6 +175,9 @@ export async function recordAnalyticsEvent(input: {
   path?: string | null;
   country?: string | null;
   visitorHash?: string | null;
+  device?: string | null;
+  browser?: string | null;
+  source?: string | null;
   at?: Date;
 }): Promise<AnalyticsEventRecord> {
   const at = input.at ?? new Date();
@@ -132,6 +188,9 @@ export async function recordAnalyticsEvent(input: {
     path: input.path ? input.path.slice(0, 300) : null,
     country: input.country ?? null,
     visitorHash: input.visitorHash ?? null,
+    device: input.device ?? null,
+    browser: input.browser ?? null,
+    source: input.source ?? null,
     day: utcDay(at),
     createdAt: at.toISOString(),
   };
@@ -142,6 +201,7 @@ export async function recordAnalyticsEvent(input: {
         data: {
           type: record.type, productId: record.productId, path: record.path,
           country: record.country, visitorHash: record.visitorHash, day: record.day,
+          device: record.device, browser: record.browser, source: record.source,
         },
       });
       return record;
@@ -165,13 +225,17 @@ export async function listAnalyticsEvents(opts: { sinceDay?: string; limit?: num
       if (rows.length > 0) {
         return rows.map((r) => ({
           id: r.id, type: r.type as AnalyticsEventType, productId: r.productId, path: r.path,
-          country: r.country, visitorHash: r.visitorHash, day: r.day, createdAt: r.createdAt.toISOString(),
+          country: r.country, visitorHash: r.visitorHash,
+          device: r.device ?? null, browser: r.browser ?? null, source: r.source ?? null,
+          day: r.day, createdAt: r.createdAt.toISOString(),
         }));
       }
     } catch { /* fall through */ }
   }
   const all = await readFileEvents();
-  return opts.sinceDay ? all.filter((e) => e.day >= opts.sinceDay!) : all;
+  // Legacy file rows predate the dimension fields — normalize them.
+  const normalized = all.map((e) => ({ ...e, device: e.device ?? null, browser: e.browser ?? null, source: e.source ?? null }));
+  return opts.sinceDay ? normalized.filter((e) => e.day >= opts.sinceDay!) : normalized;
 }
 
 /** Retention prune: remove events whose day is older than `retentionDays`. */
@@ -263,6 +327,92 @@ export function analyticsCsv(series: DayCounts[]): string {
   const header = "day,pageview,product_view,add_to_cart,checkout_start,purchase,total,visitors";
   const lines = series.map((d) => [d.day, d.pageview, d.product_view, d.add_to_cart, d.checkout_start, d.purchase, d.total, d.visitors].join(","));
   return [header, ...lines].join("\n") + "\n";
+}
+
+// ─── Office overview aggregates (pure, Phase 4 upgrade) ──────────────────────
+
+export interface DimensionCount { key: string; count: number; visitors: number }
+
+/** Ranked counts for one event dimension (country/device/browser/source…). */
+export function dimensionCounts(
+  events: AnalyticsEventRecord[],
+  pick: (e: AnalyticsEventRecord) => string | null,
+  limit = 12,
+): DimensionCount[] {
+  const map = new Map<string, { count: number; visitors: Set<string> }>();
+  for (const e of events) {
+    const key = pick(e) ?? "unknown";
+    const row = map.get(key) ?? { count: 0, visitors: new Set<string>() };
+    row.count += 1;
+    if (e.visitorHash) row.visitors.add(e.visitorHash);
+    map.set(key, row);
+  }
+  return [...map.entries()]
+    .map(([key, v]) => ({ key, count: v.count, visitors: v.visitors.size }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key))
+    .slice(0, limit);
+}
+
+export interface RangeStats {
+  events: number;
+  pageviews: number;
+  productViews: number;
+  purchases: number;
+  /** Distinct visitor hashes inside the range. NOTE: the salt rotates
+   *  daily, so a person visiting on two days counts once per day — this
+   *  is "daily uniques summed", the strongest claim the privacy design
+   *  allows. */
+  visitors: number;
+}
+
+/** Stats for events whose day falls in [fromDay, toDay] (inclusive, UTC days). */
+export function rangeStats(events: AnalyticsEventRecord[], fromDay: string, toDay: string): RangeStats {
+  const inRange = events.filter((e) => e.day >= fromDay && e.day <= toDay);
+  const visitors = new Set<string>();
+  const stats: RangeStats = { events: inRange.length, pageviews: 0, productViews: 0, purchases: 0, visitors: 0 };
+  for (const e of inRange) {
+    if (e.type === "pageview") stats.pageviews += 1;
+    else if (e.type === "product_view") stats.productViews += 1;
+    else if (e.type === "purchase") stats.purchases += 1;
+    if (e.visitorHash) visitors.add(`${e.day}:${e.visitorHash}`);
+  }
+  stats.visitors = visitors.size;
+  return stats;
+}
+
+export interface TopPage { path: string; views: number; visitors: number }
+
+/** Most-viewed paths (pageview events only), ranked. */
+export function topPages(events: AnalyticsEventRecord[], limit = 10): TopPage[] {
+  const map = new Map<string, { views: number; visitors: Set<string> }>();
+  for (const e of events) {
+    if (e.type !== "pageview" || !e.path) continue;
+    const row = map.get(e.path) ?? { views: 0, visitors: new Set<string>() };
+    row.views += 1;
+    if (e.visitorHash) row.visitors.add(e.visitorHash);
+    map.set(e.path, row);
+  }
+  return [...map.entries()]
+    .map(([path, v]) => ({ path, views: v.views, visitors: v.visitors.size }))
+    .sort((a, b) => b.views - a.views || a.path.localeCompare(b.path))
+    .slice(0, limit);
+}
+
+/**
+ * "Visitors now": distinct visitor hashes with any event in the last
+ * `windowMinutes`, plus their pageview count. An event-based presence
+ * measure (no heartbeat exists) — the office UI labels it as such.
+ */
+export function activeVisitors(events: AnalyticsEventRecord[], windowMinutes = 5, now = new Date()): { visitors: number; pageviews: number } {
+  const cutoff = now.getTime() - windowMinutes * 60 * 1000;
+  const visitors = new Set<string>();
+  let pageviews = 0;
+  for (const e of events) {
+    if (new Date(e.createdAt).getTime() < cutoff) continue;
+    if (e.visitorHash) visitors.add(e.visitorHash);
+    if (e.type === "pageview") pageviews += 1;
+  }
+  return { visitors: visitors.size, pageviews };
 }
 
 /**
