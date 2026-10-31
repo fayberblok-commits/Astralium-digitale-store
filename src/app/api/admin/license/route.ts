@@ -3,6 +3,7 @@ import { recordAudit, requireAdmin, type Permission } from "../../../../lib/team
 import {
   getLicenseConfig, listLicenseKeys, maskLicenseKey, revokeLicenseKey, sanitizeLicenseConfig, setLicenseConfig,
 } from "../../../../lib/license";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -42,9 +43,12 @@ export async function POST(req: NextRequest) {
   const auth = await requireAdmin(req, "commerce");
   if ("error" in auth) return auth.error;
   const actor = auth.actor;
-  const body = (await req.json().catch(() => null)) as
-    | { action?: string; id?: string; config?: unknown }
-    | null;
+  let body: { action?: string; id?: string; config?: unknown } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.action) return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   if (body.action === "revoke") {
     if (!body.id) return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
