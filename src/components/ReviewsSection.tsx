@@ -15,10 +15,13 @@ export default function ReviewsSection({
   productId,
   productTitle,
   dict,
+  nonce,
 }: {
   productId: string;
   productTitle: string;
   dict: Dict;
+  /** CSP nonce (§2) threaded from the server page for the JSON-LD block. */
+  nonce?: string;
 }) {
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
   const [aggregate, setAggregate] = useState<{ count: number; average: number }>({ count: 0, average: 0 });
@@ -75,7 +78,7 @@ export default function ReviewsSection({
 
   return (
     <section className="section">
-      {jsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />}
+      {jsonLd && <script nonce={nonce} type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />}
       <h2>{dict.reviews_t}</h2>
       {reviews.length === 0 ? (
         <p className="empty-note">{dict.review_none}</p>
