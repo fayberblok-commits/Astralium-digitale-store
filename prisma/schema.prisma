@@ -26,6 +26,34 @@ model Product {
   previewKey String?
   version    String   @default("1.0.0")
   active     Boolean  @default(true)
+  // Editorial fields (Phase 1 upgrade, F2): the DB is the storefront's
+  // source of truth when configured. These mirror src/data/products.ts;
+  // the file remains the bootstrap seed + zero-env fallback. Empty
+  // values mean "not populated yet" — the catalog layer falls back to
+  // the seed per-field for such legacy rows (see src/lib/catalog.ts).
+  subtitle     String   @default("")
+  description  String   @default("")
+  category     String   @default("ebooks")
+  formats      Json     @default("[]")
+  compareAtUSD Float?
+  rating       Float    @default(0)
+  reviewsCount Int      @default(0)
+  badge        String?
+  includes     Json     @default("[]")
+  preview      String   @default("")
+  hue          Int      @default(222)
+  publishedAt  String   @default("")
+  language     String?
+  // Manager's Office (Phase 4 upgrade): per-product unit cost (profit
+  // accounting), scheduled publishing (ISO instant; storefront hides the
+  // product until then), per-currency price overrides (JSON object
+  // { "EUR": 21.5 } — display prices in that currency, settlement stays
+  // USD), and per-locale editorial translations (JSON object
+  // { "fr": { "title": …, "subtitle": …, "description": … } }).
+  costUSD        Float   @default(0)
+  publishAt      String?
+  priceOverrides Json?
+  translations   Json?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -48,6 +76,15 @@ model Order {
   deliveryChannel String?
   /// SHA-256 hash of the delivery subject (phone/PSID) — raw PII never stored here.
   deliverySubjectHash String?
+  // Manager's Office (Phase 4 upgrade): refunded amount so far (full
+  // refund ⇒ refundUSD = totalUSD and status = refunded; a partial
+  // refund records the amount and keeps the status), the owner's
+  // private order note, and the buyer's country/locale captured at
+  // checkout for sales reporting (null = not captured → "unknown").
+  refundUSD Float   @default(0)
+  note      String  @default("")
+  country   String?
+  locale    String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -55,6 +92,11 @@ model Order {
   deliveryAttempts DeliveryAttempt[]
   downloadGrants  DownloadGrant[]
   claimCodes      ClaimCode[]
+
+  // providerRef (above) is @unique — it IS the provider session/order id
+  // (Stripe cs_… / PayPal order id) and the webhook idempotency anchor.
+  @@index([email])
+  @@index([status, createdAt])
 }
 
 model OrderItem {
@@ -486,12 +528,41 @@ model AnalyticsEvent {
   path        String?
   country     String?
   visitorHash String?
+  // Manager's Office dimensions (Phase 4 upgrade): coarse device class
+  // and browser family parsed server-side from the User-Agent (the raw
+  // UA is never stored), and the traffic source (utm_source, else the
+  // referrer host, else "direct"). All nullable — older rows simply
+  // have no dimension and are reported as "unknown".
+  device      String?
+  browser     String?
+  source      String?
   day         String // YYYY-MM-DD (UTC)
   createdAt   DateTime @default(now())
 
   @@index([day, type])
   @@index([productId])
   @@index([createdAt])
+}
+
+/// Support tickets (Phase 4 upgrade): the human-handoff intake behind
+/// the office support center. Created from the storefront support
+/// surface (public, rate-limited + captcha-gated); handled entirely in
+/// the Manager's Office. Messages are customer PII — never logged to
+/// the security/audit logs beyond the ticket id.
+model SupportTicket {
+  id        String   @id @default(cuid())
+  email     String
+  subject   String
+  message   String
+  orderRef  String?
+  locale    String?
+  status    String   @default("open") // open | answered | closed
+  adminNote String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([email])
 }
 
 /// Web Push subscriptions (Phase 6, feature 28). The endpoint is stored
@@ -559,6 +630,23 @@ model PrivacyRequest {
 
   @@index([emailHash])
   @@index([status, expiresAt])
+}
+
+/// Security audit log (Phase 1 upgrade, §13). Records ATTEMPTS against
+/// the store (failed logins, lockouts, denied admin access, CSRF and
+/// webhook rejections, disputes) — distinct from the Phase-6 AuditLog,
+/// which records what admins did. Actors are stored masked + hashed;
+/// details never contain credentials, tokens or message bodies.
+model SecurityLog {
+  id        String   @id @default(cuid())
+  kind      String
+  actor     String // masked (e.g. "b***@example.com", "bootstrap-owner", "ip:…")
+  actorHash String
+  detail    Json?
+  createdAt DateTime @default(now())
+
+  @@index([kind, createdAt])
+  @@index([actorHash, createdAt])
 }
 
 model ClaimCode {
