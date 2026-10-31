@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<!--
+  Astralium branded email template (Phase 2 upgrade).
+  Table-based + fully inline styles for email-client compatibility.
+  Replace the {{placeholders}}; keep the header/footer shell intact —
+  it is the same identity as the store's receipt email
+  (brandedEmailShell in src/services/email.ts).
+-->
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f6f1e7;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f1e7;padding:32px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#fffdf7;border:1px solid #d8c391;">
+        <tr><td style="background:#14100c;padding:28px 36px;text-align:center;">
+          <div style="color:#d6be8c;font-size:26px;letter-spacing:2px;">✦</div>
+          <div style="font-family:Georgia,'Times New Roman',serif;color:#f6f1e7;font-size:26px;letter-spacing:3px;margin-top:6px;">ASTRALIUM</div>
+          <div style="font-family:Arial,sans-serif;color:#d6be8c;font-size:10px;letter-spacing:5px;margin-top:4px;">DIGITALE STORE</div>
+        </td></tr>
+        <tr><td style="padding:32px 36px;font-family:Georgia,'Times New Roman',serif;color:#221d15;font-size:16px;line-height:1.65;">
+          <h1 style="font-size:22px;margin:0 0 14px;">{{heading}}</h1>
+          <p style="margin:0 0 14px;">{{body}}</p>
+          <p style="text-align:center;margin:26px 0;">
+            <a href="{{cta_url}}" style="display:inline-block;background:#14100c;color:#e9d9ae;font-family:Arial,sans-serif;font-size:13px;font-weight:bold;letter-spacing:2px;text-decoration:none;padding:14px 30px;border:1px solid #b08d3c;">{{cta_label}}</a>
+          </p>
+          <p style="color:#6b6252;font-size:13px;">{{fine_print}}</p>
+        </td></tr>
+        <tr><td style="border-top:3px double #d8c391;padding:18px 36px;text-align:center;font-family:Arial,sans-serif;color:#6b6252;font-size:12px;">
+          Digital products, delivered among the stars.<br>
+          14-day money-back guarantee on everything · astralium-digitale-store
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>
