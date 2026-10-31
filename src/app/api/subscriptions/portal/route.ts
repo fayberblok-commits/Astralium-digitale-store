@@ -1,7 +1,9 @@
+import { STRIPE_API_VERSION } from "../../../../lib/stripe";
 import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../../lib/flags";
 import { siteUrl } from "../../../../lib/server";
 import { buildPortalParams, findSubscriptionByEmail } from "../../../../lib/subscriptions";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -19,7 +21,12 @@ export async function POST(req: NextRequest) {
   if (!key) {
     return NextResponse.json({ error: "PAYMENTS_NOT_CONFIGURED" }, { status: 503 });
   }
-  const body = (await req.json().catch(() => null)) as { email?: string; locale?: string } | null;
+  let body: { email?: string; locale?: string } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   const email = (body?.email ?? "").trim();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return NextResponse.json({ error: "INVALID_EMAIL" }, { status: 400 });
@@ -31,7 +38,7 @@ export async function POST(req: NextRequest) {
   const locale = body?.locale && body.locale.length <= 10 ? body.locale : "en";
   const res = await fetch("https://api.stripe.com/v1/billing_portal/sessions", {
     method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { Authorization: `Bearer ${key}`, "Stripe-Version": STRIPE_API_VERSION, "Content-Type": "application/x-www-form-urlencoded" },
     body: buildPortalParams({ customerId: subscription.stripeCustomerId, base: siteUrl(), locale }),
   });
   const session = (await res.json()) as { url?: string; error?: { message?: string } };
