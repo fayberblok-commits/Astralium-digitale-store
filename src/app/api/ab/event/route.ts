@@ -3,6 +3,7 @@ import { getFlag } from "../../../../lib/flags";
 import {
   AB_SLOT_HERO, AB_VISITOR_COOKIE, assignVariant, getAbConfig, recordAbEvent, runningExperimentForSlot,
 } from "../../../../lib/ab";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -15,7 +16,12 @@ export const runtime = "nodejs";
  */
 export async function POST(req: NextRequest) {
   if (!(await getFlag("ab_tests"))) return new NextResponse(null, { status: 204 });
-  const body = (await req.json().catch(() => null)) as { type?: string } | null;
+  let body: { type?: string } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (body?.type !== "exposure" && body?.type !== "conversion") {
     return NextResponse.json({ error: "INVALID_TYPE" }, { status: 400 });
   }
