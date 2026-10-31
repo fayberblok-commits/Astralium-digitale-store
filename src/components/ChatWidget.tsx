@@ -24,6 +24,8 @@ interface SpeechRecognitionLike {
   onerror: (() => void) | null;
 }
 
+interface TeamEmployee { id: string; name: { en: string; ar: string }; avatar: string }
+
 export default function ChatWidget({ dict, locale, supportV2 = false }: { dict: Dict; locale: string; supportV2?: boolean }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
@@ -34,7 +36,29 @@ export default function ChatWidget({ dict, locale, supportV2 = false }: { dict: 
   const [orderEmail, setOrderEmail] = useState("");
   const [voiceOk, setVoiceOk] = useState(false);
   const [listening, setListening] = useState(false);
+  // Phase 5 upgrade: which AI-team employee is answering (null = the
+  // deterministic grounded engine; the header then shows no persona,
+  // honestly). TTS uses the browser's speech synthesis when present.
+  const [employee, setEmployee] = useState<TeamEmployee | null>(null);
+  const [ttsOk, setTtsOk] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+
+  useEffect(() => {
+    setTtsOk(typeof window !== "undefined" && "speechSynthesis" in window);
+  }, []);
+
+  function speak(text: string) {
+    try {
+      const u = new SpeechSynthesisUtterance(text.slice(0, 600));
+      u.lang = locale;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    } catch { /* TTS is an enhancement only */ }
+  }
+
+  function historyPayload(): { role: "user" | "assistant"; text: string }[] {
+    return msgs.slice(-8).map((m) => ({ role: m.role, text: m.text }));
+  }
 
   useEffect(() => {
     if (!supportV2) return;
@@ -66,9 +90,14 @@ export default function ChatWidget({ dict, locale, supportV2 = false }: { dict: 
     const res = await fetch("/api/support/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, locale }),
+      body: JSON.stringify({
+        message: text, locale, history: historyPayload(),
+        orderId: orderId.trim() || undefined,
+        email: orderEmail.trim() || undefined,
+      }),
     });
-    const data = (await res.json()) as { answer?: string };
+    const data = (await res.json()) as { answer?: string; employee?: TeamEmployee };
+    if (data.employee) setEmployee(data.employee);
     setMsgs((m) => [...m, { role: "assistant", text: data.answer ?? "…" }]);
   }
 
@@ -79,6 +108,7 @@ export default function ChatWidget({ dict, locale, supportV2 = false }: { dict: 
       body: JSON.stringify({
         message: text,
         locale,
+        history: historyPayload(),
         orderId: orderId.trim() || undefined,
         email: orderEmail.trim() || undefined,
       }),
@@ -100,7 +130,8 @@ export default function ChatWidget({ dict, locale, supportV2 = false }: { dict: 
         const line = frame.split("\n").find((l) => l.startsWith("data: "));
         if (!line) continue;
         try {
-          const evt = JSON.parse(line.slice(6)) as { delta?: string };
+          const evt = JSON.parse(line.slice(6)) as { delta?: string; employee?: TeamEmployee };
+          if (evt.employee) setEmployee(evt.employee);
           if (typeof evt.delta === "string") {
             answer += evt.delta;
             setMsgs((m) => {
@@ -143,12 +174,27 @@ export default function ChatWidget({ dict, locale, supportV2 = false }: { dict: 
       {open && (
         <div className="chat-panel" role="dialog" aria-label={dict.chat_t}>
           <div className="chat-head">
-            <span>✦ {dict.chat_t}</span>
+            <span>
+              {employee ? `${employee.avatar} ` : "✦ "}{dict.chat_t}
+              {employee && (
+                <small style={{ display: "block", opacity: 0.85 }}>
+                  {dict.chat_speaking_with} {locale === "ar" ? employee.name.ar : employee.name.en}
+                </small>
+              )}
+            </span>
             <button type="button" className="icon-btn" onClick={() => setOpen(false)} aria-label="Close">✕</button>
           </div>
           <div className="chat-msgs">
             {msgs.map((m, i) => (
-              <p key={i} className={`chat-msg chat-${m.role}`}>{m.text}</p>
+              <p key={i} className={`chat-msg chat-${m.role}`}>
+                {m.text}
+                {m.role === "assistant" && ttsOk && m.text.length > 1 && (
+                  <button
+                    type="button" className="icon-btn" aria-label={dict.chat_listen}
+                    onClick={() => speak(m.text)} style={{ marginInlineStart: 6 }}
+                  >🔊</button>
+                )}
+              </p>
             ))}
             {busy && msgs[msgs.length - 1]?.role === "user" && <p className="chat-msg chat-assistant">…</p>}
           </div>
