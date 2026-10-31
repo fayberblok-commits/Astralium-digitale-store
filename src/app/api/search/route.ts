@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../lib/flags";
 import { searchProducts, suggestProducts, type SearchFilters } from "../../../lib/search";
 import { searchProductsDb } from "../../../lib/search-db";
+// Phase 1 upgrade (F2): search runs over the resolved storefront
+// catalog (DB-first) — never the static file alone when a DB is live.
+import { getStorefrontProducts } from "../../../lib/catalog";
 
 export const runtime = "nodejs";
 
@@ -25,13 +28,14 @@ export async function GET(req: NextRequest) {
     maxPriceUSD: sp.get("maxPrice") ? Number(sp.get("maxPrice")) : undefined,
     minRating: sp.get("minRating") ? Number(sp.get("minRating")) : undefined,
   };
+  const pool = await getStorefrontProducts();
   if (sp.get("suggest") === "1") {
-    const items = suggestProducts(q).map((p) => ({ id: p.id, slug: p.slug, title: p.title, category: p.category }));
+    const items = suggestProducts(q, 6, pool).map((p) => ({ id: p.id, slug: p.slug, title: p.title, category: p.category }));
     return NextResponse.json({ suggestions: items });
   }
   // DB trigram path first for non-empty queries without in-memory-only filters.
   if (q.trim()) {
-    const dbHits = await searchProductsDb(q);
+    const dbHits = await searchProductsDb(q, 48, pool);
     if (dbHits) {
       const { passesFilters } = await import("../../../lib/search");
       const filtered = dbHits.filter((p) => passesFilters(p, filters));
@@ -41,7 +45,7 @@ export async function GET(req: NextRequest) {
       });
     }
   }
-  const hits = searchProducts(q, { filters });
+  const hits = searchProducts(q, { filters, catalog: pool });
   return NextResponse.json({
     source: "memory-fuzzy",
     results: hits.map((h) => ({ id: h.product.id, slug: h.product.slug, title: h.product.title, score: h.score })),
