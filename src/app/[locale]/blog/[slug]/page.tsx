@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDictionary } from "../../../../i18n/dictionaries";
@@ -36,6 +37,7 @@ export default async function BlogPostPage({
   if (!(await getFlag("blog"))) notFound();
   const post = await getBlogPost(locale, slug);
   if (!post) notFound();
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   const dict = getDictionary(locale);
   const base = siteUrl();
 
@@ -62,8 +64,8 @@ export default async function BlogPostPage({
 
   return (
     <>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(articleLd) }} />
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd) }} />
+      <script nonce={nonce} type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(articleLd) }} />
+      <script nonce={nonce} type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd) }} />
       <article style={{ marginTop: 28, maxWidth: 760 }}>
         <p>
           <Link href={`/${locale}/blog`}>← {dict.blog_back}</Link>
