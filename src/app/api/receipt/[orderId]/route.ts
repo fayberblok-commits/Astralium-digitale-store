@@ -3,6 +3,11 @@ import { getProductById } from "../../../../data/products";
 import { getFlag } from "../../../../lib/flags";
 import { verifyStripeSession } from "../../../../lib/fulfill";
 import { buildReceiptPdf, receiptDataFor, type ReceiptItem } from "../../../../lib/receipt";
+// Phase 1 upgrade (§7): order-access cookie binding + rate limiting.
+import { ORDER_ACCESS_COOKIE, verifyOrderAccess } from "../../../../lib/order-access";
+import { findOrder } from "../../../../lib/orders";
+import { getClientIp, httpErrorResponse, readJsonBody } from "../../../../lib/http";
+import { rateLimiters, tooManyRequests } from "../../../../lib/ratelimit";
 
 export const runtime = "nodejs";
 
@@ -40,7 +45,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ orde
   if (!(await getFlag("receipts"))) {
     return NextResponse.json({ error: "FEATURE_DISABLED" }, { status: 403 });
   }
+  const ipCheck = rateLimiters.receiptIp.check(`ip:${getClientIp(req)}`);
+  if (!ipCheck.allowed) return tooManyRequests(ipCheck);
   const { orderId } = await params;
+
+  // Path A (§7): the order-access cookie bound at the verified success
+  // page. Items/email come from the order LEDGER — nothing is taken
+  // from the request, and a cookie minted for another order never
+  // verifies for this one.
+  if (verifyOrderAccess(req.cookies.get(ORDER_ACCESS_COOKIE)?.value, orderId)) {
+    const order = await findOrder(orderId);
+    if (order && (order.status === "paid" || order.status === "fulfilled")) {
+      return pdfResponse(orderId, itemsFor(order.items.map((i) => i.productId)), order.email, order.totalUSD);
+    }
+  }
+
+  // Path B: session re-verification with Stripe (unchanged semantics).
   const sessionId = req.nextUrl.searchParams.get("session_id") ?? "";
   const verified = sessionId ? await verifyStripeSession(sessionId) : null;
   if (!verified || verified.orderId !== orderId) {
@@ -54,16 +74,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ ord
     return NextResponse.json({ error: "FEATURE_DISABLED" }, { status: 403 });
   }
   const { orderId } = await params;
-  const body = (await req.json().catch(() => null)) as {
+  let body: {
     localOrder?: { orderId: string; email?: string; status?: string; items?: { id: string; productIds?: string[] }[] };
   } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   const order = body?.localOrder;
   if (!order || order.orderId !== orderId || !Array.isArray(order.items)) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
-  if (order.status !== "paid") {
+  // Phase 1 upgrade (§7): the client's claim is NEVER trusted. Since
+  // F1 the order ledger is authoritative — the order must exist there
+  // as paid/fulfilled, and the PDF is built from LEDGER data (buyer
+  // email + items), not from anything in this request body. Before F1
+  // this path minted receipts from a localStorage claim alone, which
+  // let anyone forge a receipt for any order id.
+  const ledger = await findOrder(orderId);
+  if (!ledger || (ledger.status !== "paid" && ledger.status !== "fulfilled")) {
     return NextResponse.json({ error: "ORDER_NOT_PAID" }, { status: 403 });
   }
-  const productIds = order.items.flatMap((i) => i.productIds ?? [i.id]);
-  return pdfResponse(orderId, itemsFor(productIds), order.email ?? null);
+  const productIds = ledger.items.map((i) => i.productId);
+  return pdfResponse(orderId, itemsFor(productIds), ledger.email);
 }
