@@ -17,7 +17,9 @@ export interface EmailMessage {
     // Phase 5 kinds
     | "win-back"
     // Phase 6 kinds
-    | "owner-alert" | "privacy";
+    | "owner-alert" | "privacy"
+    // Phase 1 upgrade kinds
+    | "security";
   orderId?: string;
   /** Extra headers passed through to the provider (e.g. List-Unsubscribe). */
   headers?: Record<string, string>;
@@ -55,6 +57,31 @@ export async function sendEmail(msg: EmailMessage): Promise<{ delivered: boolean
   }
 }
 
+/**
+ * Branded email shell (Phase 2 upgrade): ink header with the astral
+ * mark + wordmark, ivory body, gilt double-rule footer — the same
+ * identity as brand/templates/email.html. Inline styles only (email
+ * clients strip stylesheets).
+ */
+export function brandedEmailShell(params: { heading: string; bodyHtml: string }): string {
+  return `<div style="background:#f6f1e7;padding:28px 12px">
+  <div style="max-width:600px;margin:0 auto;background:#fffdf7;border:1px solid #d8c391;font-family:Georgia,'Times New Roman',serif;color:#221d15">
+    <div style="background:#14100c;padding:26px 36px;text-align:center">
+      <div style="color:#d6be8c;font-size:24px;letter-spacing:2px">✦</div>
+      <div style="color:#f6f1e7;font-size:24px;letter-spacing:3px;margin-top:6px">ASTRALIUM</div>
+      <div style="font-family:Arial,sans-serif;color:#d6be8c;font-size:10px;letter-spacing:5px;margin-top:4px">DIGITALE STORE</div>
+    </div>
+    <div style="padding:30px 36px;font-size:16px;line-height:1.65">
+      <h1 style="font-size:22px;margin:0 0 14px">${params.heading}</h1>
+      ${params.bodyHtml}
+    </div>
+    <div style="border-top:3px double #d8c391;padding:16px 36px;text-align:center;font-family:Arial,sans-serif;color:#6b6252;font-size:12px">
+      Digital products, delivered among the stars.<br>14-day money-back guarantee on everything.
+    </div>
+  </div>
+</div>`;
+}
+
 export function receiptEmailHtml(params: {
   brand: string;
   orderId: string;
@@ -62,14 +89,18 @@ export function receiptEmailHtml(params: {
   totalFormatted: string;
 }): string {
   const rows = params.items
-    .map((i) => `<tr><td style="padding:8px 0">${i.title}</td><td><a href="${i.downloadUrl}">Download</a></td></tr>`)
+    .map(
+      (i) =>
+        `<tr><td style="padding:10px 0;border-bottom:1px solid #e7dcc2">${i.title}</td><td style="padding:10px 0;border-bottom:1px solid #e7dcc2;text-align:right"><a href="${i.downloadUrl}" style="color:#7d5f1a;font-weight:bold">Download</a></td></tr>`,
+    )
     .join("");
-  return `<div style="font-family:Georgia,serif;color:#10131f">
-    <h1>${params.brand}</h1>
+  return brandedEmailShell({
+    heading: params.brand,
+    bodyHtml: `
     <p>Thank you — your order <strong>${params.orderId}</strong> is confirmed (${params.totalFormatted}).</p>
-    <table>${rows}</table>
-    <p>Links are personal and valid for 7 days; re-issue them any time from your account page. 14-day money-back guarantee on everything.</p>
-  </div>`;
+    <table style="width:100%;border-collapse:collapse">${rows}</table>
+    <p style="color:#6b6252;font-size:13px">Links are personal and valid for 7 days; re-issue them any time from your account page. 14-day money-back guarantee on everything.</p>`,
+  });
 }
 
 /** Abandoned-cart step planner (timings configurable by the caller/cron). */
