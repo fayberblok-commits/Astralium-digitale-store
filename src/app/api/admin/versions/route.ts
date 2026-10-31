@@ -3,6 +3,7 @@ import { requireAdmin, type Permission } from "../../../../lib/team";
 import { getProductById } from "../../../../data/products";
 import { getBinding } from "../../../../lib/bindings";
 import { listVersions, publishVersion } from "../../../../lib/versions";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -34,9 +35,14 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const denied = await guard(req, "content");
   if (denied) return denied;
-  const body = (await req.json().catch(() => null)) as {
+  let body: {
     productId?: string; version?: string; fileKey?: string; notes?: string;
   } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.productId || !getProductById(body.productId)) {
     return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 404 });
   }
