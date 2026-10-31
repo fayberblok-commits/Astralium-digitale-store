@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listFlags, setFlag } from "../../../../lib/flags";
 import { recordAudit, requireAdmin } from "../../../../lib/team";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -16,7 +17,12 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireAdmin(req, "settings");
   if ("error" in auth) return auth.error;
-  const body = (await req.json().catch(() => null)) as { key?: string; enabled?: boolean } | null;
+  let body: { key?: string; enabled?: boolean } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.key || typeof body.enabled !== "boolean") {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
