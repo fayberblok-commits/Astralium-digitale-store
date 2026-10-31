@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 import { LOCALE_CODES } from "../i18n/locales";
-import { PRODUCTS } from "../data/products";
+// Phase 1 upgrade (F2): sitemap products come from the resolved catalog.
+import { getStorefrontProducts } from "../lib/catalog";
 import { LEGAL_DOCS } from "../data/legal";
 import { siteUrl } from "../lib/server";
 import { getFlag } from "../lib/flags";
@@ -22,6 +23,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const seoOn = await getFlag("seo_engine");
   const blogOn = seoOn && (await getFlag("blog"));
   const posts = blogOn ? await listBlogPosts({ status: "published" }) : [];
+  const PRODUCTS = await getStorefrontProducts();
 
   if (!seoOn) {
     // Legacy coverage, preserved verbatim for flag-off deployments.
