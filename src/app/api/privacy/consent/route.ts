@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../../lib/flags";
 import { getConsentPreferences, setConsentPreferences } from "../../../../lib/privacy";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -15,9 +16,12 @@ export async function POST(req: NextRequest) {
   if (!(await getFlag("privacy_center"))) {
     return NextResponse.json({ error: "FEATURE_DISABLED" }, { status: 403 });
   }
-  const body = (await req.json().catch(() => null)) as
-    | { email?: string; analytics?: boolean; marketing?: boolean }
-    | null;
+  let body: { email?: string; analytics?: boolean; marketing?: boolean } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body || typeof body.analytics !== "boolean" || typeof body.marketing !== "boolean") {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
