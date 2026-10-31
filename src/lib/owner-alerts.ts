@@ -32,10 +32,15 @@ import { envPresent } from "../services/delivery/meta.ts";
 import { sendWhatsAppText } from "../services/delivery/whatsapp.ts";
 
 export type OwnerEventKind =
-  | "order_paid" | "fraud_hold" | "delivery_failed" | "review_pending" | "subscription_past_due";
+  | "order_paid" | "fraud_hold" | "delivery_failed" | "review_pending" | "subscription_past_due"
+  // Phase 1 upgrade: security alerts from the security log (§13).
+  | "security_alert"
+  // Phase 4 upgrade: a customer opened a support ticket (human handoff).
+  | "support_ticket";
 
 export const OWNER_EVENT_KINDS: OwnerEventKind[] = [
   "order_paid", "fraud_hold", "delivery_failed", "review_pending", "subscription_past_due",
+  "security_alert", "support_ticket",
 ];
 
 export interface OwnerEventRecord {
