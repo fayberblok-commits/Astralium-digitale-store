@@ -8,6 +8,7 @@ import {
   productFileKey,
   previewFileKey,
 } from "../../../../../services/storage";
+import { httpErrorResponse, readJsonBody } from "../../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -21,13 +22,18 @@ export async function POST(req: NextRequest) {
   if (!isStorageConfigured()) {
     return NextResponse.json({ error: "STORAGE_NOT_CONFIGURED" }, { status: 503 });
   }
-  const body = (await req.json().catch(() => null)) as {
+  let body: {
     productId?: string;
     filename?: string;
     contentType?: string;
     kind?: string;
     sizeBytes?: number;
   } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.productId || !body?.filename || (body.kind !== "product" && body.kind !== "preview")) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
