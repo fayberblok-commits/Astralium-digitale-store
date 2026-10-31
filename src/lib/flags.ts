@@ -26,6 +26,12 @@ export const FLAG_REGISTRY: FlagDef[] = [
   { key: "delivery_instagram", defaultEnabled: false, description: "Offer Instagram DM delivery of download links." },
   { key: "social_proof", defaultEnabled: false, description: "Real, anonymised recent-purchase strip and sales counters." },
   { key: "ai_support_v2", defaultEnabled: false, description: "Streaming LLM support assistant with order lookup." },
+  // Phase 5 upgrade (AI employees): the provider-independent gateway
+  // team. Both default OFF, and both stay inert unless a real provider
+  // is configured — otherwise the deterministic grounded engine keeps
+  // answering and the staff UI hides itself (never fake AI).
+  { key: "ai_staff", defaultEnabled: false, description: "AI staff — customer team: gateway-powered storefront chat (greeter, sales, support, orders), grounded in the real catalog, no tools, ticket escalation with transcript." },
+  { key: "ai_owner_staff", defaultEnabled: false, description: "AI staff — owner team: Manager's Office chat whose employees act only through the typed tools layer (preview → owner apply/approve, forbidden areas refused in code, audit-logged, emergency stop)." },
   { key: "subscriptions", defaultEnabled: false, description: "Membership/subscription access via Stripe Billing." },
   { key: "loyalty", defaultEnabled: false, description: "Loyalty points and reward tiers." },
   { key: "referrals", defaultEnabled: false, description: "Affiliate/referral program with commissions." },
