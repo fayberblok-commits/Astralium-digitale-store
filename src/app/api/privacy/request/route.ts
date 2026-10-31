@@ -4,6 +4,9 @@ import { createPrivacyRequest } from "../../../../lib/privacy";
 import { createRateLimiter } from "../../../../lib/license";
 import { sendEmail } from "../../../../services/email";
 import { siteUrl } from "../../../../lib/server";
+import { httpErrorResponse, readJsonBody, getClientIp } from "../../../../lib/http";
+import { rateLimiters, tooManyRequests } from "../../../../lib/ratelimit";
+import { captchaGate } from "../../../../lib/captcha";
 
 export const runtime = "nodejs";
 
@@ -20,18 +23,27 @@ export async function POST(req: NextRequest) {
   if (!(await getFlag("privacy_center"))) {
     return NextResponse.json({ error: "FEATURE_DISABLED" }, { status: 403 });
   }
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  const ip = getClientIp(req);
   if (!limiter.hit(ip).allowed) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
-  const body = (await req.json().catch(() => null)) as
-    | { email?: string; kind?: string; locale?: string }
-    | null;
+  let body: { email?: string; kind?: string; locale?: string; captchaToken?: string } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   const email = (body?.email ?? "").trim().toLowerCase();
   const kind = body?.kind === "delete" ? "delete" : "export";
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return NextResponse.json({ error: "INVALID_EMAIL" }, { status: 400 });
   }
+  // §1: a per-EMAIL budget independent of IP (magic-link abuse defence),
+  // and §10 captcha when configured.
+  const emailCheck = rateLimiters.emailFlow.check(`email:${email}`);
+  if (!emailCheck.allowed) return tooManyRequests(emailCheck);
+  const captchaBlock = await captchaGate(body?.captchaToken, ip);
+  if (captchaBlock) return captchaBlock;
   const locale = (body?.locale ?? "en").replace(/[^a-z-]/gi, "").slice(0, 5) || "en";
   const { token } = await createPrivacyRequest(email, kind);
   const link = `${siteUrl()}/${locale}/privacy-center?token=${encodeURIComponent(token)}`;
