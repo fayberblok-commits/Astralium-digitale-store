@@ -33,7 +33,7 @@ export function AddToCartButton({
       {buyLabel && (
         <button
           type="button"
-          className={`btn ${big ? "btn-lg" : ""} btn-primary`}
+          className={`btn ${big ? "btn-lg" : ""} btn-grad`}
           onClick={() => {
             add(item);
             router.push(`/${locale}/checkout`);
