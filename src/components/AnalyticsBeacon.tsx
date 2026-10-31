@@ -16,10 +16,20 @@ import {
 function send(type: TrackType, productId?: string): void {
   try {
     const consent = analyticsConsentGranted();
+    // Manager's Office dimensions (Phase 4 upgrade): the traffic source
+    // travels as utm_source (when present in the landing URL) and the
+    // referrer HOST only — never a full referrer URL (paths/queries can
+    // carry other people's data). Device/browser are parsed server-side
+    // from the User-Agent; the raw UA is never stored.
+    let ref: string | undefined;
+    try { ref = document.referrer ? new URL(document.referrer).host : undefined; } catch { ref = undefined; }
+    const utm = new URLSearchParams(window.location.search).get("utm_source") ?? undefined;
     const payload = JSON.stringify({
       type,
       productId: productId ?? undefined,
       path: window.location.pathname,
+      ...(ref ? { ref } : {}),
+      ...(utm ? { utm } : {}),
       ...(consent ? { vid: persistentVisitorId(), vidConsent: true } : {}),
     });
     if (navigator.sendBeacon) {
