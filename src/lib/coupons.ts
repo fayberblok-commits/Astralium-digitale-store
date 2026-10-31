@@ -42,7 +42,12 @@ export type CouponResult =
   | { ok: false; reason: string };
 
 export function findCoupon(code: string): Coupon | undefined {
-  return COUPONS.find((c) => c.code === code.trim().toUpperCase());
+  return findCouponIn(COUPONS, code);
+}
+
+/** List-parameterized lookup (Phase 4 upgrade: the office-managed list). */
+export function findCouponIn(list: Coupon[], code: string): Coupon | undefined {
+  return list.find((c) => c.code === code.trim().toUpperCase());
 }
 
 export function applyCoupon(
@@ -50,7 +55,17 @@ export function applyCoupon(
   subtotalUSD: number,
   ctx: CouponContext,
 ): CouponResult {
-  const coupon = findCoupon(rawCode);
+  return applyCouponIn(COUPONS, rawCode, subtotalUSD, ctx);
+}
+
+/** List-parameterized evaluation — the pure engine behind applyCoupon. */
+export function applyCouponIn(
+  list: Coupon[],
+  rawCode: string,
+  subtotalUSD: number,
+  ctx: CouponContext,
+): CouponResult {
+  const coupon = findCouponIn(list, rawCode);
   if (!coupon) return { ok: false, reason: "not-found" };
   if (!coupon.active) return { ok: false, reason: "inactive" };
   const now = ctx.now ?? new Date();
@@ -76,6 +91,43 @@ export function applyCoupon(
   discount = Math.min(discount, subtotalUSD); // never negative totals
   discount = Math.round(discount * 100) / 100;
   return { ok: true, coupon, discountUSD: discount };
+}
+
+// ─── Office-managed list sanitizers (pure; the store lives server-side) ──────
+
+export function sanitizeCoupon(raw: unknown): Coupon | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Partial<Coupon>;
+  const code = typeof r.code === "string" ? r.code.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "").slice(0, 40) : "";
+  if (!code) return null;
+  if (r.type !== "percent" && r.type !== "fixed") return null;
+  const value = typeof r.value === "number" && Number.isFinite(r.value) ? r.value : NaN;
+  if (!Number.isFinite(value) || value <= 0 || (r.type === "percent" && value > 100)) return null;
+  const out: Coupon = { code, type: r.type, value: Math.round(value * 100) / 100, active: r.active !== false };
+  if (r.firstOrderOnly === true) out.firstOrderOnly = true;
+  if (Array.isArray(r.countries)) {
+    const countries = r.countries.filter((c): c is string => typeof c === "string").map((c) => c.toUpperCase().slice(0, 2));
+    if (countries.length > 0) out.countries = countries;
+  }
+  if (typeof r.minSubtotalUSD === "number" && r.minSubtotalUSD > 0) out.minSubtotalUSD = r.minSubtotalUSD;
+  if (typeof r.usageLimit === "number" && r.usageLimit > 0) out.usageLimit = Math.floor(r.usageLimit);
+  if (typeof r.expiresAt === "string" && /^\d{4}-\d{2}-\d{2}/.test(r.expiresAt)) out.expiresAt = r.expiresAt.slice(0, 10);
+  return out;
+}
+
+/** Sanitize a whole coupon list (dedupes by code; non-array → the seed list). */
+export function sanitizeCouponList(raw: unknown): Coupon[] {
+  if (!Array.isArray(raw)) return COUPONS.map((c) => ({ ...c }));
+  const seen = new Set<string>();
+  const out: Coupon[] = [];
+  for (const item of raw) {
+    const c = sanitizeCoupon(item);
+    if (c && !seen.has(c.code)) {
+      seen.add(c.code);
+      out.push(c);
+    }
+  }
+  return out.slice(0, 200);
 }
 
 export function priceCart(subtotalUSD: number, discountUSD: number): { subtotal: number; discount: number; total: number } {
