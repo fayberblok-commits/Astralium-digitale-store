@@ -12,16 +12,13 @@
  * deep links — { oid, pids, ch, exp } + HMAC-SHA256, domain-separated from
  * download tokens by the "ref:" signing prefix.
  */
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { getDb } from "./db.ts";
+import { legacyHmacVerify, purposeHmac, purposeHmacVerify, LEGACY_DEV_SECRET } from "./keys.ts";
 
 const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L — unambiguous when typed
 export const CLAIM_CODE_TTL_SECONDS = 7 * 24 * 3600;
 export const REF_TOKEN_TTL_SECONDS = 7 * 24 * 3600;
-
-function secret(): string {
-  return process.env.DOWNLOAD_SIGNING_SECRET || "dev-only-insecure-signing-secret-change-me-0123456789";
-}
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -146,7 +143,20 @@ export interface RefTokenPayload {
 }
 
 function signRef(body: string): string {
-  return createHmac("sha256", secret()).update(`ref:${body}`).digest("base64url");
+  // Phase 1 upgrade: HKDF "claim-code" purpose key (lib/keys.ts); the
+  // "ref:" domain prefix is retained inside the signed data.
+  const sig = purposeHmac("claim-code", `ref:${body}`);
+  if (!sig) throw new Error("CLAIM_SIGNING_NOT_AVAILABLE");
+  return sig;
+}
+
+function verifyRef(body: string, signature: string): boolean {
+  if (purposeHmacVerify("claim-code", `ref:${body}`, signature)) return true;
+  // Legacy pre-upgrade signatures (raw secret, or the dev default outside production).
+  const raw = process.env.DOWNLOAD_SIGNING_SECRET;
+  if (raw && legacyHmacVerify(raw, `ref:${body}`, signature)) return true;
+  if (process.env.NODE_ENV !== "production" && legacyHmacVerify(LEGACY_DEV_SECRET, `ref:${body}`, signature)) return true;
+  return false;
 }
 
 export function createRefToken(payload: Omit<RefTokenPayload, "exp">, ttlSeconds = REF_TOKEN_TTL_SECONDS): string {
@@ -163,10 +173,7 @@ export function verifyRefToken(token: string, nowSeconds?: number): RefVerifyRes
   const parts = (token ?? "").split(".");
   if (parts.length !== 2 || !parts[0] || !parts[1]) return { ok: false, reason: "malformed" };
   const [body, signature] = parts;
-  const expected = signRef(body);
-  const a = Buffer.from(signature);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return { ok: false, reason: "bad-signature" };
+  if (!verifyRef(body, signature)) return { ok: false, reason: "bad-signature" };
   let payload: RefTokenPayload;
   try {
     payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as RefTokenPayload;
