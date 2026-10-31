@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { createDownloadToken } from "../../../../lib/tokens";
 import { findSubjectByHash } from "../../../../lib/pii";
 import { deliverOrder } from "../../../../services/delivery";
@@ -17,6 +16,32 @@ import { receiptDataFor, receiptPdfBase64 } from "../../../../lib/receipt";
 // are issued on delivery for configured products.
 import { isOrderHeld } from "../../../../lib/fraud";
 import { issueLicenseKeysForOrder, licenseKeysEmailHtml, type IssuedKey } from "../../../../lib/license";
+// Phase 1 upgrade (F1 + §8): the order ledger owns status transitions —
+// PAID only from PENDING, refunds/disputes revoke grants, and a
+// payment-intent → order link store lets charge-level events
+// (refund/dispute) find their order.
+import { applyDispute, applyRefund, markPaidAndGrant, transitionOrder } from "../../../../lib/orders";
+import { getJsonConfig, setJsonConfig } from "../../../../lib/config-store";
+import { recordSecurityEvent } from "../../../../lib/security-log";
+import { verifyStripeWebhookSignature } from "../../../../lib/stripe";
+
+interface StripeLinks { piToOrder: Record<string, string> }
+const sanitizeLinks = (raw: unknown): StripeLinks => {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Partial<StripeLinks>;
+  return { piToOrder: r.piToOrder && typeof r.piToOrder === "object" ? r.piToOrder : {} };
+};
+async function linkPaymentIntent(pi: string, orderId: string): Promise<void> {
+  const links = await getJsonConfig<StripeLinks>("stripe_links_v1", "stripe-links.json", sanitizeLinks, { piToOrder: {} });
+  links.piToOrder[pi] = orderId;
+  const keys = Object.keys(links.piToOrder);
+  if (keys.length > 500) for (const k of keys.slice(0, keys.length - 500)) delete links.piToOrder[k];
+  await setJsonConfig("stripe_links_v1", "stripe-links.json", links, sanitizeLinks);
+}
+async function orderForPaymentIntent(pi: string | undefined): Promise<string | null> {
+  if (!pi) return null;
+  const links = await getJsonConfig<StripeLinks>("stripe_links_v1", "stripe-links.json", sanitizeLinks, { piToOrder: {} });
+  return links.piToOrder[pi] ?? null;
+}
 
 export const runtime = "nodejs";
 
@@ -29,32 +54,14 @@ export const runtime = "nodejs";
  */
 const processed = new Set<string>();
 
-function verifySignature(rawBody: string, header: string | null, secret: string): boolean {
-  if (!header) return false;
-  const parts = Object.fromEntries(
-    header.split(",").map((kv) => {
-      const i = kv.indexOf("=");
-      return [kv.slice(0, i).trim(), kv.slice(i + 1).trim()];
-    }),
-  );
-  const t = parts["t"];
-  const v1 = parts["v1"];
-  if (!t || !v1) return false;
-  const age = Math.abs(Date.now() / 1000 - Number(t));
-  if (!Number.isFinite(age) || age > 300) return false;
-  const expected = createHmac("sha256", secret).update(`${t}.${rawBody}`).digest("hex");
-  const a = Buffer.from(v1);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
 export async function POST(req: NextRequest) {
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!secret) {
     return NextResponse.json({ error: "WEBHOOK_NOT_CONFIGURED" }, { status: 503 });
   }
   const rawBody = await req.text();
-  if (!verifySignature(rawBody, req.headers.get("stripe-signature"), secret)) {
+  if (!verifyStripeWebhookSignature(rawBody, req.headers.get("stripe-signature"), secret)) {
+    void recordSecurityEvent({ kind: "webhook_bad_signature", actor: "stripe", detail: {} });
     return NextResponse.json({ error: "BAD_SIGNATURE" }, { status: 400 });
   }
   let event: { id?: string; type?: string; data?: { object?: Record<string, unknown> } };
@@ -121,12 +128,86 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true });
   }
 
+  // ── Phase 1 upgrade (§8): charge-level lifecycle events ──────────────────
+  // Refunds and disputes arrive on the CHARGE, keyed by payment intent;
+  // the PI→order link recorded at completion time resolves the order.
+  if (event.type === "charge.refunded" || event.type === "charge.dispute.created" || event.type === "charge.dispute.closed") {
+    const obj = event.data?.object ?? {};
+    const pi = typeof obj["payment_intent"] === "string" ? obj["payment_intent"] : undefined;
+    const linkedOrderId = await orderForPaymentIntent(pi);
+    if (event.type === "charge.refunded") {
+      if (linkedOrderId) {
+        const r = await applyRefund(linkedOrderId);
+        console.log(JSON.stringify({ event: "order.refund-processed", orderId: linkedOrderId, ok: r.ok, revoked: r.revoked }));
+        if (r.ok) {
+          await recordSecurityEvent({ kind: "order_refunded", actor: "stripe", detail: { orderId: linkedOrderId, revokedGrants: r.revoked } });
+        }
+      } else {
+        console.log(JSON.stringify({ event: "order.refund-unlinked", paymentIntent: pi ?? null }));
+      }
+    } else if (event.type === "charge.dispute.created") {
+      if (linkedOrderId) {
+        const r = await applyDispute(linkedOrderId);
+        console.log(JSON.stringify({ event: "order.dispute-opened", orderId: linkedOrderId, ok: r.ok, revoked: r.revoked }));
+        await recordSecurityEvent({ kind: "payment_dispute", actor: "stripe", detail: { orderId: linkedOrderId, revokedGrants: r.revoked } });
+      }
+    } else {
+      // dispute.closed: "won" keeps the money — grants stay revoked and
+      // the OWNER decides on restoration (never automatic); "lost" is a
+      // refund by outcome. Both are surfaced to the owner center.
+      const status = typeof obj["status"] === "string" ? obj["status"] : "";
+      if (status === "lost" && linkedOrderId) {
+        await applyRefund(linkedOrderId);
+      }
+      if (linkedOrderId) {
+        await recordSecurityEvent({ kind: "payment_dispute", actor: "stripe", detail: { orderId: linkedOrderId, disputeClosed: status } });
+      }
+    }
+    return NextResponse.json({ received: true });
+  }
+
+  // Expired / failed checkout sessions close their PENDING order.
+  if (event.type === "checkout.session.expired" || event.type === "checkout.session.async_payment_failed") {
+    const session = event.data?.object ?? {};
+    const sessionId = typeof session["id"] === "string" ? session["id"] : "";
+    if (sessionId) {
+      const r = await transitionOrder(sessionId, "failed");
+      console.log(JSON.stringify({ event: "order.session-closed", sessionId, ok: r.ok }));
+    }
+    return NextResponse.json({ received: true });
+  }
+
   if (event.type === "checkout.session.completed") {
     const session = event.data?.object ?? {};
     const metadata = (session["metadata"] ?? {}) as Record<string, string>;
     const orderId = metadata.order_id || String(session["client_reference_id"] ?? event.id);
     const email = ((session["customer_details"] as { email?: string } | undefined)?.email ?? "").toString();
     const productIds = (metadata.product_ids ?? "").split(",").filter(Boolean);
+    const sessionId = typeof session["id"] === "string" ? session["id"] : "";
+    const amountTotalUSD = typeof session["amount_total"] === "number" ? session["amount_total"] / 100 : 0;
+
+    // Order ledger (F1/§8): the ONLY path to PAID. A late "completed"
+    // event for a refunded/failed order is refused — PAID is never
+    // resurrected — and nothing is fulfilled for it.
+    const ledger = await markPaidAndGrant({
+      providerRef: sessionId || orderId,
+      provider: "stripe",
+      orderId,
+      email,
+      items: productIds.map((pid) => ({ productId: pid, priceUSD: getProductById(pid)?.priceUSD ?? 0 })),
+      totalUSD: amountTotalUSD,
+      deliveryChannel: metadata.delivery_channel ?? null,
+      deliverySubjectHash: metadata.delivery_subject_hash ?? null,
+    });
+    if (!ledger.ok) {
+      console.log(JSON.stringify({ event: "order.paid-refused", orderId, reason: ledger.reason, status: ledger.order.status }));
+      await recordSecurityEvent({ kind: "order_refunded", actor: "stripe", detail: { orderId, paidRefused: ledger.reason } });
+      return NextResponse.json({ received: true, refused: ledger.reason });
+    }
+    if (typeof session["payment_intent"] === "string" && session["payment_intent"]) {
+      await linkPaymentIntent(session["payment_intent"], orderId);
+    }
+    const grantTokens = new Map(ledger.grants.map((g) => [g.productId, g.token]));
     // Phase 5, feature 19: a HELD order (fraud shield) is paid but NOT
     // fulfilled — no gifts, no links, no license keys, no loyalty earn —
     // until the owner releases the hold in admin (the release re-issues
@@ -154,12 +235,14 @@ export async function POST(req: NextRequest) {
       .filter((p): p is NonNullable<typeof p> => Boolean(p))
       .map((p) => ({
         title: p.title,
-        downloadUrl: `${siteUrl()}/api/download/${createDownloadToken(p.id, orderId)}`,
+        // Prefer the ledger grant token (counted + revocable); a fresh
+        // stateless token is the fallback for duplicate deliveries.
+        downloadUrl: `${siteUrl()}/api/download/${grantTokens.get(p.id) ?? createDownloadToken(p.id, orderId)}`,
       }));
     // Phase 4, features 11+12: loyalty earn on the completed order and
     // the referral flip to "earned" — both idempotent per order, so a
-    // webhook retry can never double-apply either.
-    const amountTotalUSD = typeof session["amount_total"] === "number" ? session["amount_total"] / 100 : 0;
+    // webhook retry can never double-apply either. (amountTotalUSD is
+    // computed above, before the ledger transition.)
     if (email && amountTotalUSD > 0 && (await getFlag("loyalty"))) {
       const earned = await earnForOrder(email, orderId, amountTotalUSD);
       console.log(JSON.stringify({ event: "loyalty.earn", orderId, ...earned }));
