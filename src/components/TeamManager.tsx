@@ -28,7 +28,7 @@ interface TeamDict {
   enabled: string;
 }
 
-const ROLES = ["owner", "admin", "support", "viewer"];
+const ROLES = ["owner", "admin", "manager", "support", "marketer", "accountant", "viewer"];
 
 export default function TeamManager({ dict }: { dict: TeamDict }) {
   const [users, setUsers] = useState<TeamUser[]>([]);
