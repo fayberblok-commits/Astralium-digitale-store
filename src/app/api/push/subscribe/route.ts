@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../../lib/flags";
 import { recordConsent } from "../../../../lib/pii";
 import { pushReady, savePushSubscription } from "../../../../lib/push";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -17,9 +18,12 @@ export async function POST(req: NextRequest) {
   }
   const ready = pushReady();
   if (!ready.ok) return NextResponse.json({ error: ready.reason }, { status: 503 });
-  const body = (await req.json().catch(() => null)) as
-    | { endpoint?: string; keys?: { p256dh?: string; auth?: string } }
-    | null;
+  let body: { endpoint?: string; keys?: { p256dh?: string; auth?: string } } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.endpoint || !body.keys?.p256dh || !body.keys?.auth) {
     return NextResponse.json({ error: "INVALID_SUBSCRIPTION" }, { status: 400 });
   }
