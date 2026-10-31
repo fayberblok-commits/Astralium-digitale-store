@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { broadcastPush, countPushSubscriptions, pushReady } from "../../../../lib/push";
 import { recordAudit, requireAdmin } from "../../../../lib/team";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -24,9 +25,12 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireAdmin(req, "settings");
   if ("error" in auth) return auth.error;
-  const body = (await req.json().catch(() => null)) as
-    | { title?: string; body?: string; url?: string; confirm?: boolean }
-    | null;
+  let body: { title?: string; body?: string; url?: string; confirm?: boolean } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.title || !body?.body) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
