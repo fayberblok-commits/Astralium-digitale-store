@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../../lib/flags";
 import { captureCartSnapshot } from "../../../../lib/email-automation";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -15,9 +16,14 @@ export async function POST(req: NextRequest) {
   if (!(await getFlag("email_automation"))) {
     return NextResponse.json({ error: "FEATURE_DISABLED" }, { status: 403 });
   }
-  const body = (await req.json().catch(() => null)) as {
+  let body: {
     email?: string; productIds?: string[]; locale?: string;
   } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.email || !Array.isArray(body.productIds)) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
