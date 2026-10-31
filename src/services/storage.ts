@@ -234,6 +234,43 @@ export async function getObjectBytes(
   }
 }
 
+/**
+ * Fetch only the first `n` bytes of an object (Range GET; the Range
+ * header is not part of the SigV4 signed set here). Used by the §9
+ * magic-byte verification at upload-confirm time — never pulls a whole
+ * deliverable into memory just to sniff it.
+ */
+export async function getObjectHeadBytes(
+  key: string,
+  n: number,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Uint8Array | null> {
+  const cfg = getStorageConfig();
+  if (!cfg) return null;
+  const { url, headers } = buildSignedHeaders(cfg, "GET", key);
+  try {
+    const res = await fetchImpl(url, { method: "GET", headers: { ...headers, Range: `bytes=0-${n - 1}` } });
+    if (!res.ok && res.status !== 206) return null;
+    const buf = new Uint8Array(await res.arrayBuffer());
+    return buf.subarray(0, n);
+  } catch {
+    return null;
+  }
+}
+
+/** Delete an object (signed DELETE). Used to destroy uploads whose bytes fail verification. */
+export async function deleteObject(key: string, fetchImpl: typeof fetch = fetch): Promise<boolean> {
+  const cfg = getStorageConfig();
+  if (!cfg) return false;
+  const { url, headers } = buildSignedHeaders(cfg, "DELETE", key);
+  try {
+    const res = await fetchImpl(url, { method: "DELETE", headers });
+    return res.status === 204 || res.status === 200 || res.status === 404;
+  } catch {
+    return false;
+  }
+}
+
 export async function headObject(
   key: string,
   fetchImpl: typeof fetch = fetch,
