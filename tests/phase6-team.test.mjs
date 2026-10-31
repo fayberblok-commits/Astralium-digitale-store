@@ -122,7 +122,7 @@ test("team sessions: signed round-trip, tamper + expiry rejected; bootstrap maps
     totpSecretCipher: null, totpEnabled: false, totpLastStep: null, backupCodeHashes: [],
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
-  const token = team.createTeamSession(user, 1_700_000_000_000);
+  const token = team.createTeamSession(user, { nowMs: 1_700_000_000_000 });
   const actor = team.parseTeamSession(token, 1_700_000_100_000);
   assert.equal(actor.actor, "admin@example.com");
   assert.equal(actor.role, "support");
@@ -135,10 +135,21 @@ test("team sessions: signed round-trip, tamper + expiry rejected; bootstrap maps
   assert.equal(team.parseTeamSession(forgedToken, 1_700_000_100_000), null);
   // Expired → rejected.
   assert.equal(team.parseTeamSession(token, 1_700_000_000_000 + 9 * 3600 * 1000), null);
-  // The legacy ADMIN_PASSWORD session token still resolves to the bootstrap owner.
-  const { adminSessionToken } = await import("../src/lib/admin.ts");
-  const boot = team.actorFromCookie(adminSessionToken());
+  // Phase 1 upgrade: the bootstrap session is now a v3 payload token
+  // (expiry + idle + epoch + scope) and resolves to the bootstrap owner.
+  const { createAdminSession, parseAdminSession } = await import("../src/lib/admin.ts");
+  const { createHmac } = await import("node:crypto");
+  const bootToken = createAdminSession({ epoch: 0, nowMs: Date.now() });
+  const boot = team.actorFromCookie(bootToken);
   assert.deepEqual([boot.actor, boot.role, boot.via], ["bootstrap-owner", "owner", "password"]);
+  assert.equal(boot.scope, "full");
+  // The PRE-upgrade fixed-label token (no expiry at all) is now rejected.
+  const legacyToken = createHmac("sha256", process.env.ADMIN_PASSWORD).update("astralium-admin-session-v1").digest("base64url");
+  assert.equal(team.actorFromCookie(legacyToken), null);
+  assert.equal(parseAdminSession(legacyToken), null);
+  // An idle-expired v3 token is rejected (61 minutes after issue > 60 min idle).
+  const stale = createAdminSession({ epoch: 0, nowMs: Date.now() - 61 * 60 * 1000 });
+  assert.equal(parseAdminSession(stale), null);
   assert.equal(team.actorFromCookie("nonsense"), null);
   assert.equal(team.actorFromCookie(undefined), null);
 });
