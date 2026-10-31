@@ -41,6 +41,16 @@ export interface Product {
   publishedAt: string; // ISO date — drives "new releases" sort
   /** Primary language of the product content (ISO code). Default "en". */
   language?: string;
+  // Manager's Office fields (Phase 4 upgrade) — populated from the DB /
+  // overlay by lib/catalog.ts; absent on the static seed products.
+  /** Unit cost in USD — profit accounting in the office. Default 0. */
+  costUSD?: number;
+  /** Scheduled publishing: ISO instant; the storefront hides the product until then. */
+  publishAt?: string | null;
+  /** Per-currency price overrides, e.g. { EUR: 21.5 } — amounts IN that currency. */
+  priceOverrides?: Record<string, number>;
+  /** Per-locale editorial translations, applied by the catalog resolver. */
+  translations?: Record<string, { title?: string; subtitle?: string; description?: string }>;
 }
 
 /** The product's content language, defaulting to English. */
