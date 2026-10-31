@@ -21,6 +21,11 @@ interface Phase4Features {
   loyalty: boolean;
   expressStripe: boolean;
   expressPaypal: boolean;
+  /** Raw provider configuration (server env presence), independent of
+   *  the express flag: the provider select offers ONLY configured
+   *  providers, so a customer can never pick one that would fail. */
+  stripeConfigured: boolean;
+  paypalConfigured: boolean;
 }
 
 interface GiftDraft {
@@ -50,7 +55,9 @@ export default function CheckoutClient({
   // unless the analytics beacon is mounted).
   useEffect(() => { track("checkout_start"); }, []);
   const [email, setEmail] = useState("");
-  const [provider, setProvider] = useState<"stripe" | "paypal">("stripe");
+  const [provider, setProvider] = useState<"stripe" | "paypal">(
+    features.stripeConfigured ? "stripe" : "paypal",
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Delivery channel (Phase 2): email default; social channels appear only
@@ -307,8 +314,10 @@ export default function CheckoutClient({
           <label>
             {dict.provider_t}
             <select value={provider} onChange={(e) => setProvider(e.target.value as "stripe" | "paypal")}>
-              <option value="stripe">Stripe — cards, Link, iDEAL, SEPA…</option>
-              <option value="paypal">PayPal</option>
+              {features.stripeConfigured && (
+                <option value="stripe">Stripe — cards, Link, iDEAL, SEPA…</option>
+              )}
+              {features.paypalConfigured && <option value="paypal">PayPal</option>}
             </select>
           </label>
           {offered.length > 1 && (
