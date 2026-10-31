@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, type Permission } from "../../../../lib/team";
 import { getOfferConfig, setOfferConfig, type OfferConfig } from "../../../../lib/offers";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -22,7 +23,12 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const denied = await guard(req, "content");
   if (denied) return denied;
-  const body = (await req.json().catch(() => null)) as { config?: OfferConfig } | null;
+  let body: { config?: OfferConfig } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.config || typeof body.config !== "object") {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
