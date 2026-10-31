@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyStripeSession } from "../../../../lib/fulfill";
 import { deliverOrder } from "../../../../services/delivery";
+import { getClientIp, httpErrorResponse, readJsonBody } from "../../../../lib/http";
+import { rateLimiters, tooManyRequests } from "../../../../lib/ratelimit";
 
 export const runtime = "nodejs";
 
@@ -11,7 +13,14 @@ export const runtime = "nodejs";
  * the delivery orchestrator's email channel, which records the attempt.
  */
 export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => null)) as { sessionId?: string } | null;
+  const ipCheck = rateLimiters.deliveryEmailIp.check(`ip:${getClientIp(req)}`);
+  if (!ipCheck.allowed) return tooManyRequests(ipCheck);
+  let body: { sessionId?: string } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.sessionId) {
     return NextResponse.json({ error: "SESSION_REQUIRED" }, { status: 400 });
   }
