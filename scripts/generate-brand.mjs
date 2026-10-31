@@ -1,0 +1,117 @@
+#!/usr/bin/env node
+/**
+ * Generate the Astralium brand kit (Phase 2 upgrade).
+ *
+ * Sources of truth stay in code: artwork from src/lib/brand.ts,
+ * colours from src/lib/themes.ts. This script materialises them into
+ * brand/ (the owner's kit) and public/brand/ (served copies), and
+ * rasterises the social images with the shared PNG encoder.
+ *
+ *   node scripts/generate-brand.mjs
+ */
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  logoSymbolSvg, logoHorizontalSvg, logoStackedSvg,
+  LOGO_ON_LIGHT, LOGO_ON_DARK,
+} from "../src/lib/brand.ts";
+import { PALETTES } from "../src/lib/themes.ts";
+import { encodePng, starTest, scatter } from "./lib/png.mjs";
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+const BRAND = path.join(ROOT, "brand");
+const PUBLIC_BRAND = path.join(ROOT, "public", "brand");
+
+for (const dir of ["logo", "social", "templates"]) {
+  mkdirSync(path.join(BRAND, dir), { recursive: true });
+  mkdirSync(path.join(PUBLIC_BRAND, dir === "templates" ? "logo" : dir), { recursive: true });
+}
+
+const MONO_INK = { star: "#171512", ring: "#171512", orbit: "#171512", planet: "#171512", word: "#171512", suffix: "#171512" };
+const MONO_IVORY = { star: "#f6f1e7", ring: "#f6f1e7", orbit: "#f6f1e7", planet: "#f6f1e7", word: "#f6f1e7", suffix: "#f6f1e7" };
+const SYMBOL_COLORS = { star: "#b08d3c", ring: "#b08d3c", orbit: "#8a6d1f", planet: "#b08d3c", word: "#171512", suffix: "#8a6d1f" };
+
+const svgs = {
+  "logo-symbol.svg": logoSymbolSvg(SYMBOL_COLORS),
+  "logo-color.svg": logoHorizontalSvg(LOGO_ON_LIGHT),
+  "logo-dark.svg": logoHorizontalSvg(LOGO_ON_DARK),
+  "logo-mono.svg": logoHorizontalSvg(MONO_INK),
+  "logo-mono-light.svg": logoHorizontalSvg(MONO_IVORY),
+  "logo-stacked.svg": logoStackedSvg(LOGO_ON_LIGHT),
+  "logo-stacked-dark.svg": logoStackedSvg(LOGO_ON_DARK),
+};
+for (const [name, svg] of Object.entries(svgs)) {
+  writeFileSync(path.join(BRAND, "logo", name), svg + "\n");
+  writeFileSync(path.join(PUBLIC_BRAND, "logo", name), svg + "\n");
+  console.log(`logo/${name}`);
+}
+
+// ─── Social rasters: the mark on deep ink with a star scatter ────────────
+const INK = [16, 13, 10];
+const GOLD = [176, 141, 60];
+const GOLD_HI = [214, 190, 140];
+const GOLD_DEEP = [138, 109, 66];
+const ORBIT_TILT = (-18 * Math.PI) / 180;
+
+function socialPixel(cx, cy, starR, ringR) {
+  const stars = scatter(70);
+  return (x, y, w, h) => {
+    const nx = x / w;
+    const ny = y / h;
+    // deep ink with a soft radial glow behind the mark
+    const d = Math.hypot(nx - cx, (ny - cy) * (h / w));
+    let r = INK[0] + Math.max(0, 1 - d * 1.6) * 22;
+    let g = INK[1] + Math.max(0, 1 - d * 1.6) * 17;
+    let b = INK[2] + Math.max(0, 1 - d * 1.6) * 8;
+    // scattered field stars
+    for (const s of stars) {
+      if (Math.hypot(nx - s.x, (ny - s.y) * (h / w)) < s.r / 400) {
+        const f = s.a;
+        r = r + (GOLD_HI[0] - r) * f; g = g + (GOLD_HI[1] - g) * f; b = b + (GOLD_HI[2] - b) * f;
+      }
+    }
+    // mark, in mark-space coordinates (unit = min dimension)
+    const mx = (x - cx * w) / (Math.min(w, h) / 2);
+    const my = (y - cy * h) / (Math.min(w, h) / 2);
+    const dist = Math.hypot(mx, my);
+    if (Math.abs(dist - ringR) < 0.014 || Math.abs(dist - (ringR - 0.05)) < 0.009) [r, g, b] = GOLD_DEEP;
+    const ox = mx * Math.cos(ORBIT_TILT) - my * Math.sin(ORBIT_TILT);
+    const oy = mx * Math.sin(ORBIT_TILT) + my * Math.cos(ORBIT_TILT);
+    if (Math.abs(Math.hypot(ox / (ringR + 0.11), oy / ((ringR + 0.11) * 0.36)) - 1) < 0.02) [r, g, b] = GOLD_DEEP;
+    if (Math.hypot(mx - (ringR + 0.02), my + ringR * 0.36) < 0.045) [r, g, b] = GOLD;
+    if (starTest(mx, my, starR)) {
+      const shade = 1 - 0.22 * Math.max(0, my);
+      [r, g, b] = GOLD.map((v) => Math.round(v * shade));
+    }
+    if (dist < 0.045) [r, g, b] = [246, 241, 231];
+    return [Math.round(r), Math.round(g), Math.round(b), 255];
+  };
+}
+
+const socialJobs = [
+  ["profile.png", 1024, 1024, socialPixel(0.5, 0.5, 0.52, 0.78)],
+  ["profile-whatsapp.png", 640, 640, socialPixel(0.5, 0.5, 0.52, 0.78)],
+  ["cover-instagram.png", 1080, 1080, socialPixel(0.5, 0.44, 0.4, 0.6)],
+  ["cover-facebook.png", 1640, 924, socialPixel(0.5, 0.5, 0.5, 0.74)],
+];
+for (const [name, w, h, pixelAt] of socialJobs) {
+  const png = encodePng(w, h, pixelAt);
+  writeFileSync(path.join(BRAND, "social", name), png);
+  writeFileSync(path.join(PUBLIC_BRAND, "social", name), png);
+  console.log(`social/${name}: ${w}x${h}, ${png.length} bytes`);
+}
+
+// ─── Colour guide, generated from the palette source of truth ────────────
+const tokenRows = (mode) =>
+  ["bg", "bg2", "surface", "surfaceStrong", "text", "muted", "accent", "accentDeep", "accentInk", "champagne", "btnBg", "btnText"]
+    .map((k) => `| ${k} | \`${mode[k]}\` |`)
+    .join("\n");
+
+let colors = `# Astralium — Colour Guide\n\nGenerated by \`scripts/generate-brand.mjs\` from \`src/lib/themes.ts\` (the single source of truth). Every palette passes WCAG AA for its text pairs in both modes — verify any time with \`node scripts/check-contrast.mjs\`.\n`;
+for (const p of PALETTES) {
+  colors += `\n## ${p.id}\n\nAnimated-gradient stops (buy buttons): ${p.grad.map((g) => `\`${g}\``).join(" · ")} — text on gradient: \`${p.onGrad}\`.\n\n### Light\n\n| Token | Value |\n|---|---|\n${tokenRows(p.light)}\n\n### Dark\n\n| Token | Value |\n|---|---|\n${tokenRows(p.dark)}\n`;
+}
+writeFileSync(path.join(BRAND, "COLORS.md"), colors);
+console.log("COLORS.md");
+console.log("Brand kit generated.");
