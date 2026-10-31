@@ -54,6 +54,9 @@ export default function AnalyticsPanel({ dict }: { dict: AnalyticsDict }) {
         <div className="stat-card"><span className="muted">{dict.views} (30d)</span><strong>{data.series.reduce((s, d) => s + d.pageview, 0)}</strong></div>
       </div>
       <p>
+        {/* Plain <a> on purpose: this is a CSV file download from an API
+            route, not a page navigation — next/link would be wrong here. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a className="btn btn-ghost" href="/api/admin/analytics?format=csv">{dict.exportCsv}</a>
       </p>
       {data.totalEvents === 0 ? (
