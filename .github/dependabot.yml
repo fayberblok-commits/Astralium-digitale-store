@@ -1,0 +1,26 @@
+# Dependabot (Phase 1 upgrade, security §12): weekly dependency
+# update PRs for npm packages and GitHub Actions. Security updates
+# are enabled by default in the repository settings and arrive
+# regardless of this schedule.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      prisma:
+        patterns:
+          - "prisma"
+          - "@prisma/*"
+      next-react:
+        patterns:
+          - "next"
+          - "react"
+          - "react-dom"
+          - "eslint-config-next"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
