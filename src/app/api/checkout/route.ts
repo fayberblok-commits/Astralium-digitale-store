@@ -5,7 +5,8 @@ import { resolveBundle } from "../../../lib/bundles";
 import { byoDiscount, round2 } from "../../../lib/byo";
 import { getFlag } from "../../../lib/flags";
 import { getOfferConfig, resolveBumps } from "../../../lib/offers";
-import { applyCoupon } from "../../../lib/coupons";
+import { applyCouponIn } from "../../../lib/coupons";
+import { getCoupons } from "../../../lib/coupons-store";
 import { piiConfigured, recordConsent } from "../../../lib/pii";
 import { normalizePhone } from "../../../lib/phone";
 import { siteUrl } from "../../../lib/server";
@@ -17,6 +18,11 @@ import { commitSpendForOrder, previewRedemption } from "../../../lib/loyalty";
 import { getReferralConfig, recordAttribution } from "../../../lib/referrals";
 // Phase 5 (feature 19): fraud shield — blacklist + risk scoring + holds.
 import { assessCheckout, isBlacklisted, recordFailedAttempt } from "../../../lib/fraud";
+// Phase 1 upgrade: unified body reading, trusted-proxy client IP, the
+// order ledger (PENDING order at initiation) and the pinned Stripe API.
+import { createPendingOrder } from "../../../lib/orders";
+import { STRIPE_API_VERSION } from "../../../lib/stripe";
+import { getClientCountry, getClientIp, httpErrorResponse, readJsonBody } from "../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -34,7 +40,7 @@ const REQUIRED_ENV = [
  * PAYMENTS_NOT_CONFIGURED. It never fabricates a payment.
  */
 export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => null)) as {
+  let body: {
     items?: CartRef[];
     email?: string;
     provider?: string;
@@ -49,6 +55,11 @@ export async function POST(req: NextRequest) {
     loyaltyPoints?: number;
     refCode?: string;
   } | null;
+  try {
+    body = await readJsonBody(req, { maxBytes: 32 * 1024 });
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body || !Array.isArray(body.items) || body.items.length === 0) {
     return NextResponse.json({ error: "EMPTY_CART" }, { status: 400 });
   }
@@ -58,10 +69,8 @@ export async function POST(req: NextRequest) {
   }
   const locale = body.locale && body.locale.length <= 10 ? body.locale : "en";
   const orderId = (body.orderId ?? `AST-${Date.now().toString(36).toUpperCase()}`).slice(0, 40);
-  const clientIp =
-    req.headers.get("cf-connecting-ip") ??
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    "unknown";
+  // Trusted-proxy IP only (lib/http) — raw x-forwarded-for is spoofable.
+  const clientIp = getClientIp(req);
 
   // Fraud shield (Phase 5, feature 19): a blacklisted email is refused
   // before any payment session exists. Hash-only lookup (lib/fraud.ts).
@@ -204,10 +213,11 @@ export async function POST(req: NextRequest) {
   }
 
   // Coupon (server-side re-validation; country from CF header when present).
+  // Phase 4 upgrade: evaluated against the office-managed coupon list.
   let discount = 0;
   if (body.coupon) {
     const country = req.headers.get("cf-ipcountry") ?? undefined;
-    const result = applyCoupon(body.coupon, subtotal, { isFirstOrder: true, country });
+    const result = applyCouponIn(await getCoupons(), body.coupon, subtotal, { isFirstOrder: true, country });
     if (result.ok) discount = result.discountUSD;
   }
   // Build-your-own bundle (Phase 3, feature 3): any 3+ distinct products
@@ -309,7 +319,7 @@ export async function POST(req: NextRequest) {
       couponForm.set("name", `Astralium ${body.coupon ?? "discount"}`);
       const cRes = await fetch("https://api.stripe.com/v1/coupons", {
         method: "POST",
-        headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" },
+        headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`, "Stripe-Version": STRIPE_API_VERSION, "Content-Type": "application/x-www-form-urlencoded" },
         body: couponForm,
       });
       if (cRes.ok) {
@@ -320,13 +330,24 @@ export async function POST(req: NextRequest) {
     void total;
     const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
       method: "POST",
-      headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`, "Stripe-Version": STRIPE_API_VERSION, "Content-Type": "application/x-www-form-urlencoded" },
       body: form,
     });
     const session = (await res.json()) as { id?: string; url?: string; error?: { message?: string } };
     if (!res.ok || !session.url) {
       if (fraudOn) await recordFailedAttempt({ email, ip: clientIp });
       return NextResponse.json({ error: session.error?.message ?? "STRIPE_ERROR" }, { status: 502 });
+    }
+    // Order ledger (F1): the PENDING order exists from this moment; the
+    // webhook will transition it. Ledger failure must not break checkout.
+    if (session.id) {
+      await createPendingOrder({
+        orderId, email, provider: "stripe", providerRef: session.id,
+        items: productIds.map((pid) => ({ productId: pid, priceUSD: getProductById(pid)?.priceUSD ?? 0 })),
+        totalUSD: total, currency: "USD",
+        deliveryChannel, deliverySubjectHash: deliverySubjectHash ?? null,
+        country: getClientCountry(req) ?? null, locale,
+      }).catch(() => undefined);
     }
     await persistOrderExtras();
     await countFlashUnits();
@@ -379,6 +400,16 @@ export async function POST(req: NextRequest) {
     if (!orderRes.ok || !approve) {
       if (fraudOn) await recordFailedAttempt({ email, ip: clientIp });
       return NextResponse.json({ error: "PAYPAL_ORDER_FAILED" }, { status: 502 });
+    }
+    // Order ledger (F1): PENDING order anchored on the PayPal order id.
+    if (order.id) {
+      await createPendingOrder({
+        orderId, email, provider: "paypal", providerRef: order.id,
+        items: productIds.map((pid) => ({ productId: pid, priceUSD: getProductById(pid)?.priceUSD ?? 0 })),
+        totalUSD: total, currency: "USD",
+        deliveryChannel, deliverySubjectHash: deliverySubjectHash ?? null,
+        country: getClientCountry(req) ?? null, locale,
+      }).catch(() => undefined);
     }
     await persistOrderExtras();
     await countFlashUnits();
