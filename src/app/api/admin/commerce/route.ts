@@ -5,6 +5,7 @@ import { getPreorderConfig, setPreorderConfig, type PreorderConfig } from "../..
 import { getLoyaltyConfig, setLoyaltyConfig, type LoyaltyConfig } from "../../../../lib/loyalty";
 import { getReferralConfig, setReferralConfig, type ReferralConfig } from "../../../../lib/referrals";
 import { getPlanConfig, setPlanConfig, type SubscriptionPlanConfig } from "../../../../lib/subscriptions";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -36,13 +37,18 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const denied = await guard(req, "commerce");
   if (denied) return denied;
-  const body = (await req.json().catch(() => null)) as {
+  let body: {
     pwyw?: PwywConfig;
     preorders?: PreorderConfig;
     loyalty?: LoyaltyConfig;
     referrals?: ReferralConfig;
     plans?: SubscriptionPlanConfig;
   } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body || typeof body !== "object") {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
