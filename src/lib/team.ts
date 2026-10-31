@@ -17,6 +17,10 @@
  *   audit          ✓      ✓       –        –      reading the audit log
  *   team           ✓      –       –        –      creating/deleting accounts, role changes
  *
+ * Phase 4 upgrade adds manager/marketer/accountant and the office
+ * permissions finance (owner+accountant), bank (owner only) and
+ * security (owner only) — see the matrix definition below.
+ *
  * The single ADMIN_PASSWORD login keeps working exactly as before and
  * acts as the bootstrap OWNER (via "password") — it is how the first
  * team accounts get created, and it is never a database row.
@@ -33,28 +37,54 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
-  createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID,
+  createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID,
   scryptSync, timingSafeEqual,
 } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { getDb } from "./db.ts";
 import { getFlag } from "./flags.ts";
-import { ADMIN_COOKIE, isAdminSession } from "./admin.ts";
+import { ADMIN_COOKIE, adminSessionIdleMs, parseAdminSession } from "./admin.ts";
+import { legacyHmacVerify, purposeHmac, purposeHmacVerify } from "./keys.ts";
+import { currentSessionEpoch } from "./security-state.ts";
 import { generateTotpSecret, otpauthUri, verifyTotp } from "./totp.ts";
 
 // ─── Roles & permissions ─────────────────────────────────────────────────────
+//
+// Phase 4 upgrade (Manager's Office): the owner's five-role model joins
+// the original four. `admin` is kept as the legacy broad role (existing
+// accounts must not break); the new roles are deliberately narrower:
+//   manager    — day-to-day operations (like admin, minus settings/team)
+//   marketer   — content + campaigns (blog, bundles, offers, coupons)
+//   accountant — read + finance (sales & profit reports, CSV export)
+// New permissions:
+//   finance — sales & profit data (owner + accountant ONLY)
+//   bank    — the owner's bank vault (owner ONLY)
+//   security— the office security center (owner ONLY)
+// The brief's rule "only the owner sees money, bank and security" is
+// enforced here, server-side, on every office route: bank and security
+// are owner-only without exception; finance (the accounting reports) is
+// shared with the accountant role alone, whose job is the books.
 
-export type Role = "owner" | "admin" | "support" | "viewer";
-export const ROLES: Role[] = ["owner", "admin", "support", "viewer"];
+export type Role = "owner" | "admin" | "manager" | "support" | "marketer" | "accountant" | "viewer";
+export const ROLES: Role[] = ["owner", "admin", "manager", "support", "marketer", "accountant", "viewer"];
 
 export type Permission =
   | "read" | "moderate" | "support_ops" | "content" | "files"
-  | "commerce" | "settings" | "audit" | "team";
+  | "commerce" | "settings" | "audit" | "team"
+  // Phase 4 upgrade (Manager's Office): money/bank/security surfaces.
+  | "finance" | "bank" | "security"
+  // Phase 1 upgrade: self-service endpoints (TOTP enrollment, step-up,
+  // session refresh). Any authenticated actor may use them — including
+  // "setup"-scope sessions, which may use ONLY these.
+  | "self";
 
 const MATRIX: Record<Role, Permission[]> = {
-  owner: ["read", "moderate", "support_ops", "content", "files", "commerce", "settings", "audit", "team"],
+  owner: ["read", "moderate", "support_ops", "content", "files", "commerce", "settings", "audit", "team", "finance", "bank", "security"],
   admin: ["read", "moderate", "support_ops", "content", "files", "commerce", "settings", "audit"],
+  manager: ["read", "moderate", "support_ops", "content", "files", "commerce", "audit"],
   support: ["read", "moderate", "support_ops"],
+  marketer: ["read", "content"],
+  accountant: ["read", "finance"],
   viewer: ["read"],
 };
 
@@ -282,15 +312,36 @@ export async function setUserRole(id: string, role: Role): Promise<{ ok: boolean
 // ─── Login (password + optional TOTP / backup code) ──────────────────────────
 
 export type TeamLoginResult =
-  | { ok: true; user: AdminUserRecord }
+  | { ok: true; user: AdminUserRecord; totpSetupRequired?: boolean }
   | { ok: false; error: "INVALID_CREDENTIALS" | "TOTP_REQUIRED" | "TOTP_INVALID" };
+
+// Timing equalisation (Phase 1 upgrade, §4): an unknown email must cost
+// the same scrypt verification as a known one, so response timing cannot
+// reveal whether an admin account exists. The dummy hash is a real
+// scrypt hash of a random throwaway password, computed once per process.
+let dummyHash: string | null = null;
+function timingDummyHash(): string {
+  if (!dummyHash) dummyHash = hashPassword("timing-equalisation-dummy");
+  return dummyHash;
+}
 
 export async function loginTeamUser(email: string, password: string, code?: string): Promise<TeamLoginResult> {
   const user = await findUserByEmail(email);
-  if (!user || !verifyPassword(password, user.passwordHash)) {
+  if (!user) {
+    verifyPassword(password, timingDummyHash()); // burn the same CPU as a real check
+    return { ok: false, error: "INVALID_CREDENTIALS" };
+  }
+  if (!verifyPassword(password, user.passwordHash)) {
     return { ok: false, error: "INVALID_CREDENTIALS" }; // generic — never reveal which half failed
   }
-  if (!user.totpEnabled) return { ok: true, user };
+  if (!user.totpEnabled) {
+    // Phase 1 upgrade: TOTP is mandatory for privileged roles. Until a
+    // owner/admin account enrols, its sessions are "setup"-scoped (the
+    // login route enforces this) — enrollment is the only thing they
+    // can reach. Support/viewer keep TOTP optional.
+    const setupRequired = user.role === "owner" || user.role === "admin" || user.role === "manager";
+    return { ok: true, user, totpSetupRequired: setupRequired };
+  }
   if (!code) return { ok: false, error: "TOTP_REQUIRED" };
   const secret = user.totpSecretCipher ? decryptSecret(user.totpSecretCipher) : null;
   if (secret) {
@@ -367,55 +418,76 @@ export interface AdminActor {
   role: Role;
   via: "password" | "team";
   userId: string | null;
+  /** Phase 1 upgrade: "setup" sessions may ONLY use self-service endpoints (TOTP enrollment). */
+  scope: "full" | "setup";
+  /** Phase 1 upgrade: session epoch the token was minted under (terminate-all enforcement). */
+  epoch: number;
 }
 
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 
-function sessionSigningKey(): string | null {
-  return process.env.ADMIN_PASSWORD ?? null;
-}
-
-/** Signed team session token: v2.<b64url payload>.<hmac> (key = ADMIN_PASSWORD). */
-export function createTeamSession(user: AdminUserRecord, nowMs: number = Date.now()): string | null {
-  const key = sessionSigningKey();
-  if (!key) return null;
+/**
+ * Signed team session token: v2.<b64url payload>.<hmac>.
+ * Phase 1 upgrade: signed with the HKDF "team-session" purpose key
+ * (lib/keys.ts); payload gains iat (idle timeout), epoch (terminate-all)
+ * and scope. Verification also accepts the pre-upgrade signature (raw
+ * ADMIN_PASSWORD HMAC) so sessions issued before the upgrade live out
+ * their remaining ≤8h instead of logging everyone out mid-flight.
+ */
+export function createTeamSession(
+  user: AdminUserRecord,
+  opts: { epoch?: number; scope?: "full" | "setup"; nowMs?: number } = {},
+): string | null {
+  const nowMs = opts.nowMs ?? Date.now();
   const payload = Buffer.from(JSON.stringify({
-    sub: user.id, email: user.email, role: user.role, exp: nowMs + SESSION_TTL_MS,
+    sub: user.id, email: user.email, role: user.role,
+    iat: nowMs, exp: nowMs + SESSION_TTL_MS,
+    epoch: opts.epoch ?? 0, scope: opts.scope ?? "full",
   })).toString("base64url");
-  const sig = createHmac("sha256", key).update(`v2.${payload}`).digest("base64url");
+  const sig = purposeHmac("team-session", `v2.${payload}`);
+  if (!sig) return null;
   return `v2.${payload}.${sig}`;
 }
 
 export function parseTeamSession(token: string | undefined, nowMs: number = Date.now()): AdminActor | null {
-  const key = sessionSigningKey();
-  if (!key || !token || !token.startsWith("v2.")) return null;
+  if (!token || !token.startsWith("v2.")) return null;
   const parts = token.split(".");
   if (parts.length !== 3) return null;
-  const expected = createHmac("sha256", key).update(`v2.${parts[1]}`).digest("base64url");
-  const a = Buffer.from(parts[2]);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  const signed = `v2.${parts[1]}`;
+  const legacyKey = process.env.ADMIN_PASSWORD;
+  const valid =
+    purposeHmacVerify("team-session", signed, parts[2]) ||
+    (legacyKey ? legacyHmacVerify(legacyKey, signed, parts[2]) : false);
+  if (!valid) return null;
   try {
     const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as {
-      sub?: string; email?: string; role?: string; exp?: number;
+      sub?: string; email?: string; role?: string; exp?: number; iat?: number; epoch?: number; scope?: string;
     };
     if (!payload.sub || !payload.email || !isRole(payload.role) || typeof payload.exp !== "number") return null;
     if (payload.exp < nowMs) return null;
-    return { actor: payload.email, role: payload.role, via: "team", userId: payload.sub };
+    // Idle timeout (Phase 1 upgrade) — applies to tokens that carry iat.
+    if (typeof payload.iat === "number" && nowMs - payload.iat > adminSessionIdleMs()) return null;
+    return {
+      actor: payload.email, role: payload.role, via: "team", userId: payload.sub,
+      scope: payload.scope === "setup" ? "setup" : "full",
+      epoch: typeof payload.epoch === "number" ? payload.epoch : 0,
+    };
   } catch {
     return null;
   }
 }
 
 /**
- * Resolve the acting admin from a cookie value. The legacy
- * ADMIN_PASSWORD session token remains valid and maps to the bootstrap
- * owner; team sessions carry their role in the signed payload.
+ * Resolve the acting admin from a cookie value. Bootstrap sessions are
+ * the v3 tokens from lib/admin.ts (the pre-upgrade fixed-label token is
+ * rejected — it had no expiry); team sessions carry their role in the
+ * signed payload.
  */
 export function actorFromCookie(cookieValue: string | undefined): AdminActor | null {
   if (!cookieValue) return null;
-  if (isAdminSession(cookieValue)) {
-    return { actor: "bootstrap-owner", role: "owner", via: "password", userId: null };
+  const boot = parseAdminSession(cookieValue);
+  if (boot) {
+    return { actor: "bootstrap-owner", role: "owner", via: "password", userId: null, scope: boot.scope, epoch: boot.epoch };
   }
   return parseTeamSession(cookieValue);
 }
@@ -423,6 +495,10 @@ export function actorFromCookie(cookieValue: string | undefined): AdminActor | n
 export async function getAdminActor(req: NextRequest): Promise<AdminActor | null> {
   const actor = actorFromCookie(req.cookies.get(ADMIN_COOKIE)?.value);
   if (!actor) return null;
+  // Terminate-all enforcement (Phase 1 upgrade): a token minted under an
+  // older session epoch is dead, whichever login path issued it.
+  const epoch = await currentSessionEpoch().catch(() => 0);
+  if (actor.epoch !== epoch) return null;
   if (actor.via === "team" && !(await getFlag("team_access"))) return null; // feature off → bootstrap owner only
   if (actor.via === "team" && actor.userId) {
     // Role freshness: a demoted/deleted account loses access immediately,
@@ -453,12 +529,43 @@ export async function requireAdmin(
 ): Promise<{ actor: AdminActor } | { error: Response }> {
   const actor = await getAdminActor(req);
   if (!actor) {
+    // Security log (§13): denied access attempts are recorded (never
+    // with credentials — only the permission that was sought).
+    void import("./security-log.ts").then((m) =>
+      m.recordSecurityEvent({ kind: "admin_access_denied", actor: "anonymous", detail: { need: permission, authenticated: false } }),
+    ).catch(() => undefined);
     return { error: jsonError(401, { error: "ADMIN_UNAUTHORIZED" }) };
   }
+  // Setup-scope sessions (TOTP not yet enrolled) reach self-service only.
+  if (actor.scope === "setup" && permission !== "self") {
+    return { error: jsonError(403, { error: "TOTP_ENROLLMENT_REQUIRED", need: "self" }) };
+  }
+  if (permission === "self") return { actor };
   if (!can(actor.role, permission)) {
+    void import("./security-log.ts").then((m) =>
+      m.recordSecurityEvent({ kind: "admin_access_denied", actor: actor.actor, detail: { need: permission, authenticated: true, role: actor.role } }),
+    ).catch(() => undefined);
     return { error: jsonError(403, { error: "FORBIDDEN", role: actor.role, need: permission }) };
   }
   return { actor };
+}
+
+/**
+ * Step-up gate (Phase 1 upgrade, §4): the caller must hold a fresh
+ * step-up token (5-minute, actor-bound, minted by POST /api/admin/step-up
+ * after re-entering the password + TOTP). Used before financial actions:
+ * team account management, privacy-data execution, refunds.
+ */
+export async function requireStepUp(
+  req: NextRequest,
+  actor: AdminActor,
+): Promise<{ ok: true } | { error: Response }> {
+  const { STEPUP_COOKIE, verifyStepUpToken } = await import("./admin.ts");
+  const token = req.cookies.get(STEPUP_COOKIE)?.value;
+  if (!verifyStepUpToken(token, actor.actor)) {
+    return { error: jsonError(403, { error: "STEP_UP_REQUIRED" }) };
+  }
+  return { ok: true };
 }
 
 // ─── Audit log (append-only) ─────────────────────────────────────────────────
