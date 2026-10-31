@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../../lib/flags";
 import { markSnapshotRecovered, resolveRecoveryToken } from "../../../../lib/email-automation";
 import { getProductById } from "../../../../data/products";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -14,7 +15,12 @@ export async function POST(req: NextRequest) {
   if (!(await getFlag("email_automation"))) {
     return NextResponse.json({ error: "FEATURE_DISABLED" }, { status: 403 });
   }
-  const body = (await req.json().catch(() => null)) as { token?: string } | null;
+  let body: { token?: string } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body?.token) return NextResponse.json({ error: "TOKEN_REQUIRED" }, { status: 400 });
   const snapshot = await resolveRecoveryToken(body.token);
   if (!snapshot) return NextResponse.json({ error: "INVALID_OR_EXPIRED_LINK" }, { status: 403 });
