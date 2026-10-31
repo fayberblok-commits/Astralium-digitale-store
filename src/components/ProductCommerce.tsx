@@ -207,7 +207,7 @@ export default function ProductCommerce({
           </label>
           {subError && <p className="err-text" role="alert">{subError}</p>}
           <p style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 0 }}>
-            <button type="button" className="btn btn-primary" disabled={subBusy} onClick={() => subscribe(false)}>{dict.sub_subscribe_cta}</button>
+            <button type="button" className="btn btn-grad" disabled={subBusy} data-loading={subBusy || undefined} onClick={() => subscribe(false)}>{dict.sub_subscribe_cta}</button>
             <button type="button" className="btn btn-ghost" disabled={subBusy} onClick={() => subscribe(true)}>{dict.sub_manage_cta}</button>
           </p>
         </fieldset>
