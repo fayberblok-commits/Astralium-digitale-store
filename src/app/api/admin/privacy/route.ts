@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPrivacyConfig, sanitizePrivacyConfig, setPrivacyConfig } from "../../../../lib/privacy";
 import { recordAudit, requireAdmin } from "../../../../lib/team";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -14,7 +15,12 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireAdmin(req, "settings");
   if ("error" in auth) return auth.error;
-  const body = (await req.json().catch(() => null)) as { config?: unknown } | null;
+  let body: { config?: unknown } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (!body) return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   const { persisted, value } = await setPrivacyConfig(sanitizePrivacyConfig(body.config));
   await recordAudit({
