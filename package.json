@@ -1,7 +1,7 @@
 {
   "dependencies": {
     "@fontsource/amiri": "5.2.5",
-    "@fontsource/ibm-plex-sans-arabic": "5.2.5",
+    "@fontsource/ibm-plex-sans-arabic": "5.3.0",
     "@fontsource/inter": "5.2.5",
     "@fontsource/playfair-display": "5.2.5",
     "@prisma/client": "6.19.3",
