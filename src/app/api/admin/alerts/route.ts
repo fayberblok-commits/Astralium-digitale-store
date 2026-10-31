@@ -3,6 +3,7 @@ import {
   countUnreadOwnerEvents, listOwnerEvents, markAllOwnerEventsRead, markOwnerEventRead,
 } from "../../../../lib/owner-alerts";
 import { requireAdmin } from "../../../../lib/team";
+import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -26,7 +27,12 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireAdmin(req, "moderate");
   if ("error" in auth) return auth.error;
-  const body = (await req.json().catch(() => null)) as { action?: string; id?: string } | null;
+  let body: { action?: string; id?: string } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
   if (body?.action === "read" && body.id) {
     const r = await markOwnerEventRead(body.id);
     return NextResponse.json({ ok: r.ok }, { status: r.ok ? 200 : 404 });
