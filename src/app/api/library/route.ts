@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../lib/flags";
 import { buildLibraryEntries, ordersForEmailDb, localOrdersToInputs, versionMapFor, type LibraryOrderInput } from "../../../lib/library";
 import { getLoyaltyBalance } from "../../../lib/loyalty";
+import { httpErrorResponse, readJsonBody } from "../../../lib/http";
 
 export const runtime = "nodejs";
 
@@ -20,10 +21,15 @@ export async function POST(req: NextRequest) {
   if (!(await getFlag("library"))) {
     return NextResponse.json({ error: "FEATURE_DISABLED" }, { status: 403 });
   }
-  const body = (await req.json().catch(() => null)) as {
+  let body: {
     email?: string;
     localOrders?: { orderId: string; createdAt: string; status: string; items: { id: string; productIds?: string[] }[] }[];
   } | null;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return httpErrorResponse(err);
+  }
 
   let orders: LibraryOrderInput[] = [];
   let source: "db" | "device" = "device";
