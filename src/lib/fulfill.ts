@@ -4,6 +4,7 @@
  * the payment server-side — never from client claims.
  */
 import { createDownloadToken } from "./tokens";
+import { STRIPE_API_VERSION } from "./stripe";
 import { getProductById } from "../data/products";
 
 export interface VerifiedOrder {
@@ -18,7 +19,7 @@ export async function verifyStripeSession(sessionId: string): Promise<VerifiedOr
   if (!key || !sessionId.startsWith("cs_")) return null;
   try {
     const res = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`, {
-      headers: { Authorization: `Bearer ${key}` },
+      headers: { Authorization: `Bearer ${key}`, "Stripe-Version": STRIPE_API_VERSION },
     });
     if (!res.ok) return null;
     const s = (await res.json()) as {
