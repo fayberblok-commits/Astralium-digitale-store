@@ -4,6 +4,8 @@ import { createRefToken, issueClaimCode } from "../../../lib/claim-codes";
 import { channelAvailability } from "../../../services/delivery";
 import DeliveryOptions, { type DeliveryLinks } from "../../../components/DeliveryOptions";
 import MarkPaid from "../../../components/MarkPaid";
+import OrderAccess from "../../../components/OrderAccess";
+import { maskEmail } from "../../../lib/http";
 import AbBeacon from "../../../components/AbBeacon";
 import TrackEvent from "../../../components/TrackEvent";
 import UpsellOffer from "../../../components/UpsellOffer";
@@ -61,8 +63,11 @@ export default async function SuccessPage({
           <p className="muted">{dict.success_d}</p>
           <p>
             <strong>{verified.orderId}</strong>
-            {verified.email ? ` · ${verified.email}` : ""}
+            {/* §7: the full buyer email is never rendered on a
+                capability-URL page — masked form only. */}
+            {verified.email ? ` · ${maskEmail(verified.email)}` : ""}
           </p>
+          {sp.session_id && <OrderAccess sessionId={sp.session_id} />}
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 480, margin: "18px auto 0" }}>
             {links.map((l) => (
               <a key={l.productId} href={l.url} className="btn btn-primary btn-lg">
