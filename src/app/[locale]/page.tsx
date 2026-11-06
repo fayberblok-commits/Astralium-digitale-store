@@ -12,13 +12,14 @@ import { getHeroText, heroTextFor } from "../../lib/design";
 import { getDictionary } from "../../i18n/dictionaries";
 import { currentCurrency } from "../../lib/server";
 import { formatPrice } from "../../lib/currency";
+import { HERO_ART_DATA_URI } from "../../assets/hero-art";
 import ProductCard, { Stars } from "../../components/ProductCard";
 import Cover from "../../components/Cover";
 import HeroScene, { HeroStats } from "../../components/HeroScene";
 import Marquee from "../../components/Marquee";
 import ScrollReveal from "../../components/ScrollReveal";
 import NewsletterForm from "../../components/NewsletterForm";
-import { AddToCartButton } from "../../components/Buttons";
+import { AddToCartButton, ExpressPayPalButton } from "../../components/Buttons";
 import SocialProof from "../../components/SocialProof";
 import AbBeacon from "../../components/AbBeacon";
 import { cookies } from "next/headers";
@@ -56,44 +57,65 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
   const bestsellers = PRODUCTS.filter((p) => p.badge === "bestseller");
   const newReleases = [...PRODUCTS].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)).slice(0, 4);
   const hero = PRODUCTS[0];
+  // 2026-11 redesign: the featured band's product — first bestseller,
+  // else the catalog's lead product (real catalog data, as before).
+  const featured = bestsellers[0] ?? hero;
+  // The PayPal-branded button renders only when PayPal is actually
+  // configured — the codebase's standing no-dead-buttons rule.
+  const paypalConfigured = Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET);
   const categoryCounts = new Map<string, number>();
   for (const p of PRODUCTS) categoryCounts.set(p.category, (categoryCounts.get(p.category) ?? 0) + 1);
 
   const sections: Record<HomeSectionId, ReactNode> = {
     hero: (
       <section className="hero">
-        <div className="hero-frame">
+        <div className="hero-frame hero-split">
           {/* Phase 2 upgrade: animated scene (aurora + canvas stars +
-              floating shapes) behind the copy; counters and gently
-              swaying 3D covers below it. All decorative layers are
-              CLS-safe and honour reduced-motion / the owner's toggle. */}
+              floating shapes) behind the copy. All decorative layers
+              are CLS-safe and honour reduced-motion / the owner's
+              toggle. 2026-11 redesign: the frame is now the approved
+              mockups' two-column composition — copy on one side, the
+              arch-framed Astralium artwork with the lead product's
+              cover overlapping it on the other. */}
           <HeroScene />
-          <p className="hero-kicker">{dict.hero_kicker}</p>
-          <h1>{heroTitle}</h1>
-          <p>{heroOverride.sub}</p>
-          <div className="btn-row" style={{ justifyContent: "center" }}>
-            <Link href={`/${locale}/shop`} className="btn btn-primary btn-lg">{dict.hero_cta}</Link>
-            <Link href={`/${locale}/product/${hero.slug}`} className="btn btn-lg">{dict.hero_cta2}</Link>
+          <div className="hero-copy">
+            <p className="hero-kicker">{dict.hero_kicker}</p>
+            <h1>{heroTitle}</h1>
+            <p>{heroOverride.sub}</p>
+            <div className="btn-row hero-btns">
+              <Link href={`/${locale}/shop`} className="btn btn-primary btn-lg">{dict.hero_cta}</Link>
+              <Link href={`/${locale}/product/${hero.slug}`} className="btn btn-lg">{dict.hero_cta2}</Link>
+            </div>
+            <p className="hero-trust">
+              {dict.trust_instant} <span aria-hidden="true">◆</span> {dict.trust_guarantee} <span aria-hidden="true">◆</span> {dict.trust_secure}
+            </p>
+            <HeroStats
+              stats={[
+                { value: PRODUCTS.length, label: dict.hero_stat_products },
+                { value: 40, label: dict.hero_stat_languages },
+                {
+                  value: Math.round((PRODUCTS.reduce((s, p) => s + p.rating, 0) / Math.max(1, PRODUCTS.length)) * 10) / 10,
+                  decimals: 1,
+                  suffix: " ★",
+                  label: dict.hero_stat_rating,
+                },
+                { value: 14, label: dict.hero_stat_guarantee },
+              ]}
+            />
           </div>
-          <HeroStats
-            stats={[
-              { value: PRODUCTS.length, label: dict.hero_stat_products },
-              { value: 40, label: dict.hero_stat_languages },
-              {
-                value: Math.round((PRODUCTS.reduce((s, p) => s + p.rating, 0) / Math.max(1, PRODUCTS.length)) * 10) / 10,
-                decimals: 1,
-                suffix: " ★",
-                label: dict.hero_stat_rating,
-              },
-              { value: 14, label: dict.hero_stat_guarantee },
-            ]}
-          />
-          <div className="hero-covers" aria-hidden="true">
-            {PRODUCTS.slice(0, 3).map((p) => (
-              <div className="hero-cover-3d" key={p.id}>
-                <Cover title={p.title} category={p.category} hue={p.hue} size="sm" />
-              </div>
-            ))}
+          <div className="hero-art" aria-hidden="true">
+            <div className="hero-arch">
+              {/* Owner-approved artwork (2026-11): generated for the
+                  redesign, shipped in public/brand. Decorative — the
+                  adjacent copy carries all meaning. Plain <img> by
+                  design: the codebase self-hosts all imagery and does
+                  not use the next/image optimizer anywhere. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={HERO_ART_DATA_URI} alt="" width={859} height={1000} />
+            </div>
+            <div className="hero-mini-cover">
+              <Cover title={hero.title} category={hero.category} hue={hero.hue} size="sm" />
+            </div>
           </div>
         </div>
       </section>
@@ -119,7 +141,55 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
     ),
     featured: (
       <section className="section" data-reveal>
-        <h2>{dict.sec_bestsellers}</h2>
+        {/* 2026-11 redesign: "The Featured Book" band from the approved
+            mockups — one real catalog product, large cover, price, and
+            the stacked BUY NOW / ADD TO CART / PayPal actions. Its
+            borders carry the owner's animated colour cycle on the
+            astralium-noir palette (.cycle-line). The bestsellers grid
+            follows unchanged below it. */}
+        <div className="sec-head">
+          <p className="eyebrow"><span className="gem" aria-hidden="true">✦</span> {dict.feat_collection}</p>
+          <h2>{dict.sec_featured_book}</h2>
+        </div>
+        <article className="feat-band cycle-line">
+          <Link href={`/${locale}/product/${featured.slug}`} className="feat-cover" aria-label={featured.title}>
+            <Cover title={featured.title} category={featured.category} hue={featured.hue} size="lg" />
+          </Link>
+          <div className="feat-mid">
+            <h3>{featured.title}</h3>
+            <p className="muted">{featured.subtitle}</p>
+            <p className="feat-price">
+              <strong>{formatPrice(featured.priceUSD, currency, locale)}</strong>
+              {featured.compareAtUSD && <s>{formatPrice(featured.compareAtUSD, currency, locale)}</s>}
+              <small>{dict.one_time_note} · {featured.formats.map((f) => f.format).join(" · ")}</small>
+            </p>
+          </div>
+          <div className="feat-actions">
+            <AddToCartButton
+              stack
+              big
+              locale={locale}
+              addLabel={dict.add_to_cart}
+              inCartLabel={dict.in_cart}
+              buyLabel={dict.buy_now}
+              item={{
+                id: featured.id, kind: "product", slug: featured.slug,
+                title: featured.title, priceUSD: featured.priceUSD, hue: featured.hue,
+              }}
+            />
+            {paypalConfigured && (
+              <ExpressPayPalButton
+                big
+                locale={locale}
+                item={{
+                  id: featured.id, kind: "product", slug: featured.slug,
+                  title: featured.title, priceUSD: featured.priceUSD, hue: featured.hue,
+                }}
+              />
+            )}
+          </div>
+        </article>
+        <h2 className="feat-grid-title">{dict.sec_bestsellers}</h2>
         <div className="grid">
           {bestsellers.map((p) => (
             <ProductCard key={p.id} product={p} locale={locale} dict={dict} currency={currency} />
