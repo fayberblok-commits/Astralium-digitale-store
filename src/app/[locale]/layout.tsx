@@ -9,6 +9,9 @@ import "@fontsource/playfair-display/500.css";
 import "@fontsource/playfair-display/600.css";
 import "@fontsource/playfair-display/700.css";
 import "@fontsource/playfair-display/600-italic.css";
+// 2026-11 redesign: Marcellus — the letterspaced label face of the
+// approved mockups (eyebrows, buttons, nav, footer chips).
+import "@fontsource/marcellus/400.css";
 import "@fontsource/amiri/400.css";
 import "@fontsource/amiri/700.css";
 import "@fontsource/inter/400.css";
