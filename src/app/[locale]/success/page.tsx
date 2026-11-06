@@ -1,5 +1,5 @@
 import { getDictionary } from "../../../i18n/dictionaries";
-import { verifyStripeSession, downloadLinksFor } from "../../../lib/fulfill";
+import { verifyStripeSession, verifyPaypalOrder, downloadLinksFor } from "../../../lib/fulfill";
 import { createRefToken, issueClaimCode } from "../../../lib/claim-codes";
 import { channelAvailability } from "../../../services/delivery";
 import DeliveryOptions, { type DeliveryLinks } from "../../../components/DeliveryOptions";
@@ -19,14 +19,27 @@ export default async function SuccessPage({
   searchParams,
 }: {
   params: Promise<{ locale: string }>;
-  searchParams: Promise<{ session_id?: string; order?: string }>;
+  searchParams: Promise<{ session_id?: string; order?: string; po?: string; token?: string }>;
 }) {
   const { locale } = await params;
   const sp = await searchParams;
   const dict = getDictionary(locale);
 
-  // Downloads are issued ONLY after server-side verification with Stripe.
-  const verified = sp.session_id ? await verifyStripeSession(sp.session_id) : null;
+  // Downloads are issued ONLY after server-side verification:
+  //  - Stripe: the checkout session, verified against Stripe's API.
+  //  - PayPal: the PayPal order id (`po` from our SDK capture flow;
+  //    `token` is appended by PayPal itself on the redirect return),
+  //    verified against our ledger — the order must be PAID there,
+  //    which only the capture/webhook money pipeline can produce.
+  //    The store's own `order` (AST-…) id is NEVER a verification
+  //    key: it is timestamp-derived and enumerable.
+  const paypalRef = sp.po ?? sp.token;
+  const verified = sp.session_id
+    ? await verifyStripeSession(sp.session_id)
+    : paypalRef
+      ? await verifyPaypalOrder(paypalRef)
+      : null;
+  const providerRef = sp.session_id ?? paypalRef;
   const links = verified ? downloadLinksFor(verified) : [];
 
   // Phase 2: social delivery options for verified orders — a one-time
@@ -59,10 +72,16 @@ export default async function SuccessPage({
       {/* 2026-11 redesign: the mockups' thank-you seal — a gold ring
           with a check inside the Astralium diamond. */}
       <p className="success-seal" aria-hidden="true"><span>✓</span></p>
-      <h1>{dict.success_t}</h1>
+      {/* Owner's congratulation is the headline of a verified payment
+          (2026-11 fix); the pending/unverified state keeps the
+          neutral heading. */}
+      <h1>{verified ? dict.success_congrats : dict.success_t}</h1>
       {verified ? (
         <>
-          <p className="muted">{dict.success_d}</p>
+          {/* The "copy sent to your email" line is shown only when an
+              email actually exists — checkout email is optional now,
+              and delivery on this page never depends on it. */}
+          {verified.email && <p className="muted">{dict.success_d}</p>}
           <p>
             <strong>{verified.orderId}</strong>
             {/* §7: the full buyer email is never rendered on a
@@ -100,7 +119,7 @@ export default async function SuccessPage({
               purchasedProductIds={verified.productIds}
             />
           )}
-          {sp.session_id && <MarkPaid providerRef={sp.session_id} />}
+          {providerRef && <MarkPaid providerRef={providerRef} />}
           {/* Phase 6, feature 27: a purchase event fires ONLY on a server-verified payment. */}
           {verified && <TrackEvent type="purchase" />}
           {/* Phase 5, feature 23: a verified payment is the A/B
