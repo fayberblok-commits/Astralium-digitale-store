@@ -16,6 +16,12 @@ import { getDictionary, NATIVE_DICTS } from "../src/i18n/dictionaries.ts";
 import { LOCALES } from "../src/i18n/locales.ts";
 
 const NEW_KEYS = [
+  // Owner fixes (2026-11): optional checkout email, PayPal SDK card
+  // fields, express success headline, mobile hero jump, chat pill,
+  // mobile-nav support entry.
+  "success_congrats", "checkout_email_label", "checkout_email_hint",
+  "pay_or_card", "pay_card_name", "pay_by_card_btn", "pay_error",
+  "pay_redirect_fallback", "hero_browse_books", "chat_fab_label", "nav_support",
   "admin_security_title", "admin_security_desc", "admin_security_events", "admin_security_empty", "admin_security_epoch", "admin_security_totp_title", "admin_security_totp_on", "admin_security_totp_off", "admin_security_totp_begin", "admin_security_totp_secret", "admin_security_totp_code", "admin_security_totp_confirm", "admin_security_totp_backup", "admin_security_totp_disable", "admin_security_stepup", "admin_security_stepup_done", "admin_security_terminate", "admin_security_terminate_done", "admin_security_locked", "admin_security_password",
   "admin_files_title", "admin_files_desc", "admin_files_product", "admin_files_status",
   "admin_files_action", "admin_files_bound", "admin_files_unbound", "admin_files_kind_product",
@@ -157,6 +163,9 @@ const NEW_KEYS = [
   // Phase 2 upgrade: themes, brand & homepage motion
   "palette_maison_classic", "palette_aurora_dawn", "palette_tropical_glow",
   "palette_cosmic_candy", "palette_emerald_gold", "palette_electric_blue",
+  // 2026-11 redesign: astralium-noir palette name + mockup UI keys
+  "palette_astralium_noir", "sec_featured_book", "feat_collection", "view_book",
+  "one_time_note", "checkout_kicker", "checkout_summary", "checkout_secure_note",
   "admin_theme_title", "admin_theme_desc", "admin_theme_palette", "admin_theme_mode",
   "admin_theme_mode_light", "admin_theme_mode_dark", "admin_theme_mode_system",
   "admin_theme_motion", "admin_theme_motion_hint", "admin_theme_save", "admin_theme_saved",
