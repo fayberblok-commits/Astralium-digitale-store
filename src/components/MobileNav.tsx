@@ -10,6 +10,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { Dict } from "../i18n/dictionaries";
 import { useStore } from "../lib/store";
+import { openChat } from "../lib/chat-events";
 
 export default function MobileNav({ locale, dict }: { locale: string; dict: Dict }) {
   const pathname = usePathname() ?? "";
@@ -45,6 +46,13 @@ export default function MobileNav({ locale, dict }: { locale: string; dict: Dict
           <span className="mobile-nav-label">{it.label}</span>
         </Link>
       ))}
+      {/* Owner fix (2026-11): a Support entry that opens the smart
+          employee (ChatWidget) — support must be reachable from the
+          thumb bar on every page. It is a button, not a page link. */}
+      <button type="button" className="mobile-nav-item" onClick={() => openChat()}>
+        <span className="mobile-nav-icon" aria-hidden="true">✦</span>
+        <span className="mobile-nav-label">{dict.nav_support}</span>
+      </button>
     </nav>
   );
 }
