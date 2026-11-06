@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { headers } from "next/headers";
 import type { Product } from "../../../../data/products";
@@ -13,7 +12,8 @@ import { formatPrice, formatProductPrice } from "../../../../lib/currency";
 import ProductGallery from "../../../../components/ProductGallery";
 import { FAQS } from "../../../../data/products";
 import ProductCard, { Stars } from "../../../../components/ProductCard";
-import { AddToCartButton, ExpressPayPalButton } from "../../../../components/Buttons";
+import { AddToCartButton, ExpressBuyButton, ExpressPayPalButton } from "../../../../components/Buttons";
+import Cover from "../../../../components/Cover";
 import RecommendationsRail from "../../../../components/RecommendationsRail";
 import ReviewsSection from "../../../../components/ReviewsSection";
 import RecordView from "../../../../components/RecordView";
@@ -287,19 +287,21 @@ export default async function ProductPage({
       />
       <RecordView slug={product.slug} productId={product.id} />
 
+      {/* Sticky buy bar (mobile, CSS-gated): cover thumb + title/price
+          + BUY NOW, so the pay action is always visible. Owner fix
+          (2026-11): BUY NOW here is the EXPRESS purchase (straight
+          to a single-item checkout) — the old bar also carried an
+          Add-to-Cart and a cart link, which overflowed small screens;
+          both live in the buy panel above. */}
       <div className="sticky-buybar">
-        <span className="sb-title">{product.title}</span>
-        <span style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <strong>{formatProductPrice(product, currency, locale)}</strong>
-          <AddToCartButton
-            item={cartItem}
-            locale={locale}
-            addLabel={dict.add_to_cart}
-            inCartLabel={dict.in_cart}
-            buyLabel={dict.buy_now}
-          />
-          <Link href={`/${locale}/cart`} className="btn btn-ghost">{dict.nav_cart}</Link>
+        <span className="sb-thumb" aria-hidden="true">
+          <Cover title={product.title} category={product.category} hue={product.hue} size="sm" />
         </span>
+        <span className="sb-meta">
+          <span className="sb-title">{product.title}</span>
+          <strong className="sb-price">{formatProductPrice(product, currency, locale)}</strong>
+        </span>
+        <ExpressBuyButton item={cartItem} locale={locale} label={dict.buy_now} />
       </div>
     </>
   );
