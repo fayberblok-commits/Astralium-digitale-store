@@ -625,6 +625,42 @@ export async function persistOrderFields(
   return updated;
 }
 
+/**
+ * Fill in the buyer email ONLY when the order has none (owner fix,
+ * 2026-11: checkout email is optional — when the buyer skipped it,
+ * the payer email PayPal returns at capture time becomes the email
+ * of record for the receipt and delivery records). An email the
+ * buyer typed at checkout is never overwritten. Returns the order
+ * as it stands afterwards (null when the order does not exist).
+ */
+export async function setOrderEmailIfEmpty(orderId: string, email: string): Promise<OrderRecord | null> {
+  const clean = (email ?? "").trim();
+  const order = await getOrderById(orderId);
+  if (!order) return null;
+  if (!clean || order.email) return order;
+  const updated: OrderRecord = { ...order, email: clean, updatedAt: new Date().toISOString() };
+  const db = await getDb().catch(() => null);
+  if (db) {
+    try {
+      // Guarded: only a still-empty email may be filled, so a race
+      // with a buyer-typed email can never clobber it.
+      const res = await db.order.updateMany({
+        where: { id: order.id, email: "" },
+        data: { email: clean },
+      });
+      if (res.count > 0) return updated;
+      return (await getOrderById(orderId)) ?? updated;
+    } catch { /* fall through to file */ }
+  }
+  const store = await readFileStore();
+  const idx = store.orders.findIndex((o) => o.id === order.id);
+  if (idx >= 0 && !store.orders[idx].email) {
+    store.orders[idx] = updated;
+    await writeFileStore(store);
+  }
+  return updated;
+}
+
 export async function setOrderNote(idOrRef: string, note: string): Promise<{ ok: boolean; order?: OrderRecord }> {
   const order = await findOrder(idOrRef);
   if (!order) return { ok: false };
