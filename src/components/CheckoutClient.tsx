@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import type { Dict } from "../i18n/dictionaries";
-import { useStore, type OrderRecord } from "../lib/store";
+import { useStore, type CartItem, type OrderRecord } from "../lib/store";
 import { formatPrice } from "../lib/currency";
 import { priceCart } from "../lib/coupons";
 import { byoDiscount } from "../lib/byo";
@@ -10,6 +10,11 @@ import Cover from "./Cover";
 import { normalizePhone, PHONE_COUNTRIES, countryForLocalePhone } from "../lib/phone";
 import { readPwywChoices } from "./ProductCommerce";
 import { track } from "../lib/track-client";
+// Owner fix (2026-11): optional checkout email + express single-item
+// checkout + on-page PayPal SDK (Smart Buttons / Card Fields).
+import { normalizeCheckoutEmail } from "../lib/checkout-rules";
+import { checkoutItemsFor, shouldClearCart } from "../lib/express";
+import PayPalSdk from "./PayPalSdk";
 
 interface BumpOffer {
   productId: string; title: string; priceUSD: number; discountPercent: number;
@@ -43,6 +48,8 @@ export default function CheckoutClient({
   channels,
   features,
   flashPrices,
+  paypalClientId,
+  expressItem,
 }: {
   locale: string;
   dict: Dict;
@@ -50,8 +57,17 @@ export default function CheckoutClient({
   channels: { key: ChannelKey; available: boolean }[];
   features: Phase4Features;
   flashPrices: Record<string, number>;
+  /** Public PayPal client id (server-rendered) for the on-page SDK. */
+  paypalClientId?: string | null;
+  /** Express intent: when set, this checkout contains ONLY this item
+   *  and the cart is left completely untouched. */
+  expressItem?: CartItem | null;
 }) {
   const { cart, subtotal, clear, saveOrder } = useStore();
+  // The single item list every total, payload and summary below is
+  // computed from: the express item alone, or the cart as-is.
+  const items = checkoutItemsFor(expressItem ?? null, cart);
+  const expressMode = Boolean(expressItem);
   // Phase 6, feature 27: reaching checkout is a funnel step (no-op
   // unless the analytics beacon is mounted).
   useEffect(() => { track("checkout_start"); }, []);
@@ -96,6 +112,9 @@ export default function CheckoutClient({
   const [bumps, setBumps] = useState<BumpOffer[]>([]);
   const [selectedBumps, setSelectedBumps] = useState<string[]>([]);
   useEffect(() => {
+    // Express checkout contains ONLY the chosen item — an order bump
+    // would add another product, so bumps are never offered there.
+    if (expressMode) return;
     void (async () => {
       try {
         const found: BumpOffer[] = [];
@@ -113,7 +132,7 @@ export default function CheckoutClient({
   const bumpTotal = bumps
     .filter((b) => selectedBumps.includes(b.productId))
     .reduce((s, b) => s + Math.round(b.priceUSD * (1 - b.discountPercent / 100) * 100) / 100, 0);
-  const byo = byoDiscount(cart.filter((i) => i.kind === "product").map((i) => i.id), PRODUCTS);
+  const byo = byoDiscount(items.filter((i) => i.kind === "product").map((i) => i.id), PRODUCTS);
 
   // Phase 4 display pricing: PWYW choices (session) and flash-sale
   // prices (server-computed, passed as props) override catalog prices
@@ -124,7 +143,7 @@ export default function CheckoutClient({
     if (item.kind !== "product") return item.priceUSD;
     return pwywChoices[item.id]?.amountUSD ?? flashPrices[item.id] ?? item.priceUSD;
   };
-  const adjustedSubtotal = Math.round(cart.reduce((s, i) => s + displayPrice(i), 0) * 100) / 100;
+  const adjustedSubtotal = Math.round(items.reduce((s, i) => s + displayPrice(i), 0) * 100) / 100;
   void subtotal;
   const totals = priceCart(adjustedSubtotal + bumpTotal, (coupon?.discountUSD ?? 0) + byo.discountUSD);
 
@@ -151,7 +170,7 @@ export default function CheckoutClient({
   // every failure here is silent — checkout never depends on it.
   useEffect(() => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
-    const productIds = cart.filter((i) => i.kind === "product").map((i) => i.id);
+    const productIds = items.filter((i) => i.kind === "product").map((i) => i.id);
     if (productIds.length === 0) return;
     const timer = setTimeout(() => {
       void fetch("/api/cart/snapshot", {
@@ -162,30 +181,51 @@ export default function CheckoutClient({
       }).catch(() => { /* best-effort */ });
     }, 1500);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [email, cart, locale]);
 
-  async function pay(express?: "applepay" | "googlepay") {
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  interface PreparedCheckout {
+    cleanEmail: string;
+    giftList: { productId: string; recipientEmail: string; message?: string; sendAt?: string }[];
+    pwywPayload: Record<string, { amountUSD?: number; tierIndex?: number }>;
+    phoneE164?: string;
+    loyaltyRequested: number;
+    refCode?: string;
+  }
+
+  /**
+   * Validate the form and derive every payload value ONCE — shared by
+   * the redirect flow and the PayPal SDK flow so both checkouts behave
+   * identically (the server re-validates everything regardless).
+   * Returns null after setting the visible error.
+   */
+  function prepareCheckout(): PreparedCheckout | null {
+    // Email is OPTIONAL (owner fix, 2026-11): blank is fine; a typed
+    // email must be well-formed (same rule as the server —
+    // lib/checkout-rules).
+    const emailCheck = normalizeCheckoutEmail(email);
+    if (!emailCheck.ok) {
       setError(dict.newsletter_bad);
-      return;
+      return null;
     }
+    const cleanEmail = emailCheck.email;
     // WhatsApp delivery needs a valid E.164 number + explicit opt-in.
     let phoneE164: string | undefined;
     if (channel === "whatsapp") {
       const parsed = normalizePhone(phone, phoneCountry);
       if (!parsed.ok) {
         setError(dict.delivery_phone_hint);
-        return;
+        return null;
       }
       if (!optIn) {
         setError(dict.delivery_optin_label);
-        return;
+        return null;
       }
       phoneE164 = parsed.e164;
     }
     // Phase 4 payloads — every value is re-validated server-side.
     const giftList = features.gifts
-      ? cart
+      ? items
           .filter((i) => i.kind === "product" && giftDrafts[i.id]?.enabled)
           .map((i) => ({
             productId: i.id,
@@ -197,11 +237,18 @@ export default function CheckoutClient({
     for (const g of giftList) {
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(g.recipientEmail)) {
         setError(dict.gift_recipient_ph);
-        return;
+        return null;
       }
     }
+    // Gift orders are the one flow that genuinely needs the buyer's
+    // email (gift records + claim codes are keyed to it; the server
+    // enforces the same rule with EMAIL_REQUIRED_FOR_GIFTS).
+    if (giftList.length > 0 && !cleanEmail) {
+      setError(dict.checkout_email_hint);
+      return null;
+    }
     const pwywPayload: Record<string, { amountUSD?: number; tierIndex?: number }> = {};
-    for (const item of cart.filter((i) => i.kind === "product")) {
+    for (const item of items.filter((i) => i.kind === "product")) {
       const choice = pwywChoices[item.id];
       if (choice) {
         pwywPayload[item.id] = choice.tierIndex !== undefined
@@ -218,7 +265,26 @@ export default function CheckoutClient({
       }
     })();
     const loyaltyRequested = features.loyalty ? Math.max(0, Math.floor(Number(loyaltyPoints) || 0)) : 0;
+    return { cleanEmail, giftList, pwywPayload, phoneE164, loyaltyRequested, refCode };
+  }
 
+  interface CheckoutResponse {
+    url?: string | null; error?: string; sessionId?: string; providerOrderId?: string;
+    pricing?: { totalUSD: number };
+  }
+
+  /**
+   * POST /api/checkout and record the on-device order. `mode: "sdk"`
+   * asks the server for a PayPal order id to approve ON this page;
+   * the redirect mode returns the provider URL as before. On failure
+   * the visible error is set and null is returned.
+   */
+  async function startCheckout(opts: {
+    mode: "redirect" | "sdk";
+    usedProvider: "stripe" | "paypal";
+  }): Promise<{ data: CheckoutResponse; orderId: string } | null> {
+    const prepared = prepareCheckout();
+    if (!prepared) return null;
     setBusy(true);
     setError(null);
     const orderId = `AST-${Date.now().toString(36).toUpperCase()}`;
@@ -227,38 +293,36 @@ export default function CheckoutClient({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: cart.map((i) => ({ id: i.id, kind: i.kind })),
-          email,
-          provider: express ? "stripe" : provider,
+          items: items.map((i) => ({ id: i.id, kind: i.kind })),
+          email: prepared.cleanEmail,
+          provider: opts.usedProvider,
+          mode: opts.mode === "sdk" ? "sdk" : undefined,
           coupon: coupon?.code,
           bumpProductIds: selectedBumps,
           locale,
           orderId,
-          delivery: { channel, phoneE164, optIn: channel === "whatsapp" ? optIn : undefined },
-          pwyw: Object.keys(pwywPayload).length > 0 ? pwywPayload : undefined,
-          gifts: giftList.length > 0 ? giftList : undefined,
-          loyaltyPoints: loyaltyRequested > 0 ? loyaltyRequested : undefined,
-          refCode,
+          delivery: { channel, phoneE164: prepared.phoneE164, optIn: channel === "whatsapp" ? optIn : undefined },
+          pwyw: Object.keys(prepared.pwywPayload).length > 0 ? prepared.pwywPayload : undefined,
+          gifts: prepared.giftList.length > 0 ? prepared.giftList : undefined,
+          loyaltyPoints: prepared.loyaltyRequested > 0 ? prepared.loyaltyRequested : undefined,
+          refCode: prepared.refCode,
         }),
       });
-      const data = (await res.json()) as {
-        url?: string; error?: string; sessionId?: string; providerOrderId?: string;
-        pricing?: { totalUSD: number };
-      };
+      const data = (await res.json()) as CheckoutResponse;
       if (res.status === 503 || data.error === "PAYMENTS_NOT_CONFIGURED") {
         setError(dict.payments_not_configured);
         setBusy(false);
-        return;
+        return null;
       }
-      if (!res.ok || !data.url) {
+      if (!res.ok) {
         setError(data.error ?? "Payment could not be started.");
         setBusy(false);
-        return;
+        return null;
       }
       const order: OrderRecord = {
-        orderId, email,
+        orderId, email: prepared.cleanEmail,
         items: [
-          ...cart,
+          ...items,
           ...bumps.filter((b) => selectedBumps.includes(b.productId)).map((b) => ({
             id: b.productId, kind: "product" as const,
             slug: getProductById(b.productId)?.slug ?? b.productId,
@@ -269,21 +333,74 @@ export default function CheckoutClient({
         ],
         totalUSD: data.pricing?.totalUSD ?? totals.total,
         discountUSD: totals.discount, coupon: coupon?.code,
-        provider: express ? "stripe" : provider,
+        provider: opts.usedProvider,
         providerRef: data.sessionId ?? data.providerOrderId,
         createdAt: new Date().toISOString(), status: "initiated",
       };
       saveOrder(order);
-      clear();
-      sessionStorage.removeItem("astralium-coupon");
-      location.href = data.url;
+      return { data, orderId };
     } catch {
       setError("Network error — please retry.");
       setBusy(false);
+      return null;
     }
   }
 
-  if (cart.length === 0) {
+  /** The classic redirect flow — unchanged behaviour, and the
+   *  permanent fallback whenever the on-page SDK is unavailable. */
+  async function pay(express?: "applepay" | "googlepay", providerOverride?: "stripe" | "paypal") {
+    const usedProvider = express ? "stripe" : (providerOverride ?? provider);
+    const started = await startCheckout({ mode: "redirect", usedProvider });
+    if (!started) return;
+    if (!started.data.url) {
+      setError("Payment could not be started.");
+      setBusy(false);
+      return;
+    }
+    // Express purchases never touch the cart; a cart checkout clears
+    // it exactly as before.
+    if (shouldClearCart(expressItem)) {
+      clear();
+      try { sessionStorage.removeItem("astralium-coupon"); } catch { /* best-effort */ }
+    }
+    location.href = started.data.url;
+  }
+
+  /** PayPal SDK: create the order on our server, approve on-page. */
+  async function sdkCreateOrder(): Promise<string> {
+    const started = await startCheckout({ mode: "sdk", usedProvider: "paypal" });
+    if (!started?.data.providerOrderId) {
+      throw new Error("paypal-order-create-failed");
+    }
+    return started.data.providerOrderId;
+  }
+
+  /** PayPal SDK: capture on our server, then go to the success page
+   *  (which verifies against the ledger and issues the downloads). */
+  async function sdkCaptureOrder(paypalOrderId: string): Promise<void> {
+    try {
+      const res = await fetch("/api/checkout/capture", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerOrderId: paypalOrderId }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; successUrl?: string; error?: string };
+      if (!res.ok || !data.ok || !data.successUrl) {
+        throw new Error(data.error ?? "capture-failed");
+      }
+      if (shouldClearCart(expressItem)) {
+        clear();
+        try { sessionStorage.removeItem("astralium-coupon"); } catch { /* best-effort */ }
+      }
+      location.href = data.successUrl;
+    } catch (err) {
+      setError(dict.pay_error);
+      setBusy(false);
+      throw err;
+    }
+  }
+
+  if (items.length === 0) {
     return <p className="empty-note" style={{ marginTop: 28 }}>{dict.cart_empty}</p>;
   }
 
@@ -293,16 +410,16 @@ export default function CheckoutClient({
         <p className="muted">{dict.checkout_guest}</p>
         <div className="checkout-form">
           <label>
-            Email
+            {dict.checkout_email_label}
             <input
               type="email"
-              required
               placeholder={dict.email_ph}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
             />
           </label>
+          <p className="muted" style={{ margin: 0 }}>{dict.checkout_email_hint}</p>
           {/* Phase 4, feature 16: express buttons render ONLY when the
               provider is actually configured (server-computed props) —
               Apple Pay / Google Pay via Stripe's hosted checkout (which
@@ -319,7 +436,7 @@ export default function CheckoutClient({
                   </>
                 )}
                 {features.expressPaypal && (
-                  <button type="button" className="express-btn paypal" disabled={busy} onClick={() => { setProvider("paypal"); void pay(); }}>PayPal</button>
+                  <button type="button" className="express-btn paypal" disabled={busy} onClick={() => { setProvider("paypal"); void pay(undefined, "paypal"); }}>PayPal</button>
                 )}
               </div>
             </div>
@@ -340,6 +457,27 @@ export default function CheckoutClient({
               </select>
             </label>
           </div>
+          {/* Owner fix (2026-11): with PayPal selected, the buyer can
+              pay ON this page — Smart Buttons, or bank card via
+              PayPal's hosted Card Fields (rendered only when PayPal
+              reports the account/buyer eligible; otherwise the
+              section hides itself). The redirect button below always
+              remains as the fallback. */}
+          {provider === "paypal" && paypalClientId && (
+            <PayPalSdk
+              clientId={paypalClientId}
+              labels={{
+                orCard: dict.pay_or_card,
+                cardName: dict.pay_card_name,
+                payByCard: dict.pay_by_card_btn,
+                processing: dict.processing,
+                error: dict.pay_error,
+              }}
+              createOrder={sdkCreateOrder}
+              captureOrder={sdkCaptureOrder}
+              onError={(message) => { setError(message); setBusy(false); }}
+            />
+          )}
           {offered.length > 1 && (
             <fieldset style={{ border: "none", padding: 0, margin: 0 }}>
               <legend style={{ fontWeight: 700, marginBottom: 8 }}>{dict.delivery_title}</legend>
@@ -410,10 +548,10 @@ export default function CheckoutClient({
               })}
             </fieldset>
           )}
-          {features.gifts && cart.some((i) => i.kind === "product") && (
+          {features.gifts && items.some((i) => i.kind === "product") && (
             <fieldset style={{ border: "none", padding: 0, margin: 0 }}>
               <legend style={{ fontWeight: 700, marginBottom: 8 }}>🎁 {dict.gift_t}</legend>
-              {cart.filter((i) => i.kind === "product").map((item) => {
+              {items.filter((i) => i.kind === "product").map((item) => {
                 const draft = giftDrafts[item.id] ?? { enabled: false, recipientEmail: "", message: "", sendAt: "" };
                 const set = (patch: Partial<GiftDraft>) =>
                   setGiftDrafts((cur) => ({ ...cur, [item.id]: { ...draft, ...patch } }));
@@ -472,6 +610,9 @@ export default function CheckoutClient({
             </fieldset>
           )}
           {error && <p className="err-text" role="alert">{error}</p>}
+          {provider === "paypal" && paypalClientId && (
+            <p className="muted" style={{ margin: 0 }}>{dict.pay_redirect_fallback}</p>
+          )}
           <button type="button" className="btn btn-grad btn-lg" disabled={busy} data-loading={busy || undefined} onClick={() => pay()}>
             🔒 {busy ? dict.processing : `${dict.pay_btn} · ${formatPrice(totals.total, currency, locale)}`}
           </button>
@@ -481,7 +622,7 @@ export default function CheckoutClient({
       </div>
       <div className="panel summary-panel">
         <h2 style={{ marginTop: 0 }}>{dict.checkout_summary}</h2>
-        {cart.map((i) => (
+        {items.map((i) => (
           <div key={i.id} className="summary-row sum-item">
             <span className="sum-thumb" aria-hidden="true">
               <Cover
