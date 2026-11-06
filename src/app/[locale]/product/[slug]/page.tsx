@@ -13,7 +13,7 @@ import { formatPrice, formatProductPrice } from "../../../../lib/currency";
 import ProductGallery from "../../../../components/ProductGallery";
 import { FAQS } from "../../../../data/products";
 import ProductCard, { Stars } from "../../../../components/ProductCard";
-import { AddToCartButton } from "../../../../components/Buttons";
+import { AddToCartButton, ExpressPayPalButton } from "../../../../components/Buttons";
 import RecommendationsRail from "../../../../components/RecommendationsRail";
 import ReviewsSection from "../../../../components/ReviewsSection";
 import RecordView from "../../../../components/RecordView";
@@ -87,6 +87,10 @@ export default async function ProductPage({
     expressOn &&
     (Boolean(process.env.STRIPE_SECRET_KEY && process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY) ||
       Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET));
+  // 2026-11 redesign: the mockups' PayPal-branded button under the
+  // buy actions — rendered only when PayPal is actually configured
+  // (env presence, same computation as the express note above).
+  const paypalConfigured = Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET);
 
   // JSON-LD (Phase 5, SEO engine): Product + Offer carry real catalog
   // data; AggregateRating is emitted ONLY from real APPROVED reviews
@@ -143,6 +147,11 @@ export default async function ProductPage({
               buyLabel={dict.buy_now}
               big
             />
+            {paypalConfigured && (
+              <div style={{ marginTop: 10 }}>
+                <ExpressPayPalButton item={cartItem} locale={locale} big />
+              </div>
+            )}
             <p className="muted">{dict.free_returns_note}</p>
             {expressAvailable && (
               <p className="express-note">
