@@ -55,8 +55,10 @@ export default async function SuccessPage({
   }
 
   return (
-    <div className="panel" style={{ marginTop: 32, textAlign: "center" }}>
-      <p style={{ fontSize: "2.4rem", margin: 0 }} aria-hidden="true">✦</p>
+    <div className="panel success-panel" style={{ marginTop: 32, textAlign: "center" }}>
+      {/* 2026-11 redesign: the mockups' thank-you seal — a gold ring
+          with a check inside the Astralium diamond. */}
+      <p className="success-seal" aria-hidden="true"><span>✓</span></p>
       <h1>{dict.success_t}</h1>
       {verified ? (
         <>
@@ -70,7 +72,7 @@ export default async function SuccessPage({
           {sp.session_id && <OrderAccess sessionId={sp.session_id} />}
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 480, margin: "18px auto 0" }}>
             {links.map((l) => (
-              <a key={l.productId} href={l.url} className="btn btn-primary btn-lg">
+              <a key={l.productId} href={l.url} className="btn btn-grad btn-lg">
                 ⬇ {dict.download_btn} — {l.title}
               </a>
             ))}
