@@ -18,15 +18,21 @@ test("contrast math: black on white is 21:1, identical colours are 1:1", () => {
   assert.ok(Math.abs(contrastRatio("#123456", "#123456") - 1) < 0.001);
 });
 
-test("registry: six palettes, maison-classic first and preserved as the default", () => {
-  assert.equal(PALETTES.length, 6);
+test("registry: seven palettes, maison-classic first and preserved as the fallback", () => {
+  assert.equal(PALETTES.length, 7);
   assert.deepEqual(
     PALETTES.map((p) => p.id),
-    ["maison-classic", "aurora-dawn", "tropical-glow", "cosmic-candy", "emerald-gold", "electric-blue"],
+    ["maison-classic", "aurora-dawn", "tropical-glow", "cosmic-candy", "emerald-gold", "electric-blue", "astralium-noir"],
   );
+  // maison-classic remains the code-level fallback identity…
   assert.equal(themes.DEFAULT_PALETTE_ID, "maison-classic");
   assert.equal(getPalette("nope").id, "maison-classic");
   assert.equal(getPalette(undefined).id, "maison-classic");
+  // …while the SHIPPING storefront default (owner-approved 2026-11
+  // redesign) is astralium-noir in dark mode.
+  assert.equal(settings.DEFAULT_THEME_SETTINGS.palette, "astralium-noir");
+  assert.equal(settings.DEFAULT_THEME_SETTINGS.mode, "dark");
+  assert.equal(getPalette("astralium-noir").onGrad, "#241a05");
 });
 
 test("maison-classic preserves the pre-upgrade identity tokens exactly", () => {
