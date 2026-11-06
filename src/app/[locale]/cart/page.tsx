@@ -9,7 +9,7 @@ export default async function CartPage({ params }: { params: Promise<{ locale: s
   const currency = await currentCurrency(locale);
   return (
     <>
-      <h1 style={{ marginTop: 28 }}>{dict.cart_t}</h1>
+      <h1 className="lux-title">{dict.cart_t}</h1>
       <CartRecover dict={dict} />
       <CartClient locale={locale} dict={dict} currency={currency} />
     </>
