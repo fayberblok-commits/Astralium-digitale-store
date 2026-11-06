@@ -39,7 +39,10 @@ export default async function CheckoutPage({ params }: { params: Promise<{ local
   };
   return (
     <>
-      <h1 style={{ marginTop: 28 }}>{dict.checkout_t}</h1>
+      {/* 2026-11 redesign: the mockups' centred checkout title with
+          its "last step" eyebrow. */}
+      <p className="eyebrow lux-kicker"><span className="gem" aria-hidden="true">✦</span> {dict.checkout_kicker}</p>
+      <h1 className="lux-title">{dict.checkout_t}</h1>
       <CheckoutClient locale={locale} dict={dict} currency={currency} channels={channels} features={features} flashPrices={flashPrices} />
     </>
   );
