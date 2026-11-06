@@ -86,6 +86,13 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
               <Link href={`/${locale}/shop`} className="btn btn-primary btn-lg">{dict.hero_cta}</Link>
               <Link href={`/${locale}/product/${hero.slug}`} className="btn btn-lg">{dict.hero_cta2}</Link>
             </div>
+            {/* Owner fix (2026-11): on phones the hero used to fill the
+                whole first screen with the books far below. This jump
+                (mobile-only, CSS-gated) lands the reader directly on
+                the featured book + catalog sections. */}
+            <p className="hero-jump-wrap">
+              <a href="#books" className="hero-jump">{dict.hero_browse_books} <span aria-hidden="true">↓</span></a>
+            </p>
             <p className="hero-trust">
               {dict.trust_instant} <span aria-hidden="true">◆</span> {dict.trust_guarantee} <span aria-hidden="true">◆</span> {dict.trust_secure}
             </p>
@@ -140,7 +147,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
       </section>
     ),
     featured: (
-      <section className="section" data-reveal>
+      <section className="section" id="books" data-reveal>
         {/* 2026-11 redesign: "The Featured Book" band from the approved
             mockups — one real catalog product, large cover, price, and
             the stacked BUY NOW / ADD TO CART / PayPal actions. Its
