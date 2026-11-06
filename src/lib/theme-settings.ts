@@ -22,9 +22,17 @@ export interface ThemeSettings {
   motion: boolean;
 }
 
+/**
+ * Shipping default (owner-approved 2026-11 redesign): the storefront
+ * opens on the "astralium-noir" palette in dark mode. This is only the
+ * no-settings default — the owner can switch palette/mode any time in
+ * the admin panel, and `DEFAULT_PALETTE_ID` (maison-classic) remains
+ * the code-level fallback for unknown ids, per its preservation
+ * contract in lib/themes.
+ */
 export const DEFAULT_THEME_SETTINGS: ThemeSettings = {
-  palette: DEFAULT_PALETTE_ID,
-  mode: "system",
+  palette: "astralium-noir",
+  mode: "dark",
   motion: true,
 };
 
