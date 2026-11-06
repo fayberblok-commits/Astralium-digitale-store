@@ -601,6 +601,15 @@ const en: Dict = {
   palette_cosmic_candy: "Cosmic Candy",
   palette_emerald_gold: "Emerald & Gold",
   palette_electric_blue: "Electric Blue",
+  palette_astralium_noir: "Astralium Noir",
+  // 2026-11 redesign (owner-approved mockups): featured band, checkout.
+  sec_featured_book: "The Featured Book",
+  feat_collection: "The Collection",
+  view_book: "View book",
+  one_time_note: "One-time payment",
+  checkout_kicker: "Last step",
+  checkout_summary: "Order summary",
+  checkout_secure_note: "Encrypted and secure payment — your card details never touch our store.",
   admin_theme_title: "Storefront theme",
   admin_theme_desc:
     "Choose the colour palette, default mode and motion for the whole storefront. Changes apply everywhere instantly — no rebuild. Every palette is verified to WCAG AA contrast in light and dark mode. Selecting a palette previews it live on this page; Save makes it permanent.",
@@ -1412,6 +1421,15 @@ const ar: Dict = {
   palette_cosmic_candy: "حلوى كونية",
   palette_emerald_gold: "زمرد وذهب",
   palette_electric_blue: "أزرق كهربائي",
+  palette_astralium_noir: "أستراليوم نوار",
+  // إعادة تصميم 2026-11 (نماذج معتمدة من المالك): الشريط المميز والدفع.
+  sec_featured_book: "الكتاب المميّز",
+  feat_collection: "المجموعة",
+  view_book: "عرض الكتاب",
+  one_time_note: "دفعة واحدة",
+  checkout_kicker: "الخطوة الأخيرة",
+  checkout_summary: "ملخص الطلب",
+  checkout_secure_note: "دفع مشفّر وآمن — بيانات بطاقتك لا تصل إلى متجرنا أبداً.",
   admin_theme_title: "مظهر المتجر",
   admin_theme_desc:
     "اختر لوحة الألوان والوضع الافتراضي والحركة للمتجر بأكمله. تُطبَّق التغييرات في كل مكان فوراً — دون إعادة بناء. كل لوحة مُتحقَّق منها وفق تباين WCAG AA في الوضعين الفاتح والداكن. اختيار لوحة يعاينها مباشرة على هذه الصفحة، و«حفظ» يجعلها دائمة.",
