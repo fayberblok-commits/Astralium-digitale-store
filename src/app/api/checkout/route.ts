@@ -23,6 +23,12 @@ import { assessCheckout, isBlacklisted, recordFailedAttempt } from "../../../lib
 import { createPendingOrder } from "../../../lib/orders";
 import { STRIPE_API_VERSION } from "../../../lib/stripe";
 import { getClientCountry, getClientIp, httpErrorResponse, readJsonBody } from "../../../lib/http";
+// Owner fix (2026-11): checkout email is OPTIONAL (receipt/backup
+// only — delivery happens on the success page), and PayPal order
+// creation goes through the shared lib so the redirect flow and the
+// on-page JS SDK flow build identical orders.
+import { normalizeCheckoutEmail } from "../../../lib/checkout-rules";
+import { buildPaypalOrderBody, createPaypalOrder, getPaypalAccessToken, paypalConfigured } from "../../../lib/paypal";
 
 export const runtime = "nodejs";
 
@@ -44,6 +50,8 @@ export async function POST(req: NextRequest) {
     items?: CartRef[];
     email?: string;
     provider?: string;
+    /** "sdk" = on-page PayPal JS SDK flow (no redirect); anything else = redirect flow. */
+    mode?: string;
     coupon?: string;
     bumpProductIds?: string[];
     locale?: string;
@@ -63,10 +71,17 @@ export async function POST(req: NextRequest) {
   if (!body || !Array.isArray(body.items) || body.items.length === 0) {
     return NextResponse.json({ error: "EMPTY_CART" }, { status: 400 });
   }
-  const email = (body.email ?? "").trim();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return NextResponse.json({ error: "INVALID_EMAIL" }, { status: 400 });
+  // Email is OPTIONAL (owner fix, 2026-11): blank is fine — the book
+  // is delivered on the success page; a typed email is used only for
+  // the receipt/backup copy and must be well-formed. For PayPal, the
+  // payer email returned at capture is stored on the order when the
+  // buyer skipped this field (lib/paypal.ts fulfilPaypalOrder).
+  const emailCheck = normalizeCheckoutEmail(body.email);
+  if (!emailCheck.ok) {
+    return NextResponse.json({ error: emailCheck.error }, { status: 400 });
   }
+  const email = emailCheck.email;
+  const sdkMode = body.mode === "sdk";
   const locale = body.locale && body.locale.length <= 10 ? body.locale : "en";
   const orderId = (body.orderId ?? `AST-${Date.now().toString(36).toUpperCase()}`).slice(0, 40);
   // Trusted-proxy IP only (lib/http) — raw x-forwarded-for is spoofable.
@@ -75,7 +90,10 @@ export async function POST(req: NextRequest) {
   // Fraud shield (Phase 5, feature 19): a blacklisted email is refused
   // before any payment session exists. Hash-only lookup (lib/fraud.ts).
   const fraudOn = await getFlag("fraud_shield");
-  if (fraudOn && (await isBlacklisted(email))) {
+  // Email-keyed fraud checks only apply when an email was provided —
+  // with the optional-email flow, anonymous buyers must not share one
+  // empty-string bucket (that would aggregate their velocity counts).
+  if (fraudOn && email && (await isBlacklisted(email))) {
     return NextResponse.json({ error: "EMAIL_BLACKLISTED" }, { status: 403 });
   }
 
@@ -184,6 +202,12 @@ export async function POST(req: NextRequest) {
     if (!(await getFlag("gifts"))) {
       return NextResponse.json({ error: "GIFTS_DISABLED" }, { status: 403 });
     }
+    // A gift order needs the BUYER's email: gift records and claim
+    // codes are keyed to it. This is the one flow where the otherwise
+    // optional email is genuinely required.
+    if (!email) {
+      return NextResponse.json({ error: "EMAIL_REQUIRED_FOR_GIFTS" }, { status: 400 });
+    }
     if (!piiConfigured()) {
       return NextResponse.json({ error: "PII_NOT_CONFIGURED" }, { status: 400 });
     }
@@ -237,7 +261,8 @@ export async function POST(req: NextRequest) {
   // persistOrderExtras, only once the payment session exists.
   let loyaltyRedeemUSD = 0;
   let loyaltyPointsSpent = 0;
-  if (body.loyaltyPoints && body.loyaltyPoints > 0 && (await getFlag("loyalty"))) {
+  // Loyalty balances are keyed by email — no email, no redemption.
+  if (body.loyaltyPoints && body.loyaltyPoints > 0 && email && (await getFlag("loyalty"))) {
     const redemption = await previewRedemption(email, body.loyaltyPoints, Math.max(0, subtotal - discount));
     loyaltyPointsSpent = redemption.points;
     loyaltyRedeemUSD = redemption.valueUSD;
@@ -251,7 +276,7 @@ export async function POST(req: NextRequest) {
   // pending HOLD: payment proceeds, but delivery pauses (webhook +
   // download route enforce it) until the owner reviews. Review-only —
   // the buyer is never told and nothing is auto-refunded.
-  if (fraudOn) {
+  if (fraudOn && email) {
     const assessment = await assessCheckout({ orderId, email, ip: clientIp, amountUSD: total });
     if (!assessment.blocked && assessment.held) {
       console.log(JSON.stringify({ event: "fraud.hold", orderId, score: assessment.score, reasons: assessment.reasons }));
@@ -283,7 +308,8 @@ export async function POST(req: NextRequest) {
   if (provider === "stripe" && process.env.STRIPE_SECRET_KEY) {
     const form = new URLSearchParams();
     form.set("mode", "payment");
-    form.set("customer_email", email);
+    // Optional email: only prefill Stripe's receipt email when given.
+    if (email) form.set("customer_email", email);
     form.set("client_reference_id", orderId);
     form.set("success_url", `${base}/${locale}/success?session_id={CHECKOUT_SESSION_ID}`);
     form.set("cancel_url", `${base}/${locale}/checkout`);
@@ -335,7 +361,7 @@ export async function POST(req: NextRequest) {
     });
     const session = (await res.json()) as { id?: string; url?: string; error?: { message?: string } };
     if (!res.ok || !session.url) {
-      if (fraudOn) await recordFailedAttempt({ email, ip: clientIp });
+      if (fraudOn && email) await recordFailedAttempt({ email, ip: clientIp });
       return NextResponse.json({ error: session.error?.message ?? "STRIPE_ERROR" }, { status: 502 });
     }
     // Order ledger (F1): the PENDING order exists from this moment; the
@@ -361,60 +387,46 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  if (provider === "paypal" && process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET) {
-    const paypalBase = process.env.PAYPAL_ENV === "sandbox" ? "https://api-m.sandbox.paypal.com" : "https://api-m.paypal.com";
-    const auth = Buffer.from(`${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_CLIENT_SECRET}`).toString("base64");
-    const tokenRes = await fetch(`${paypalBase}/v1/oauth2/token`, {
-      method: "POST",
-      headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" },
-      body: "grant_type=client_credentials",
-    });
-    if (!tokenRes.ok) {
-      if (fraudOn) await recordFailedAttempt({ email, ip: clientIp });
+  if (provider === "paypal" && paypalConfigured()) {
+    const accessToken = await getPaypalAccessToken();
+    if (!accessToken) {
+      if (fraudOn && email) await recordFailedAttempt({ email, ip: clientIp });
       return NextResponse.json({ error: "PAYPAL_AUTH_FAILED" }, { status: 502 });
     }
-    const { access_token } = (await tokenRes.json()) as { access_token: string };
-    const orderRes = await fetch(`${paypalBase}/v2/checkout/orders`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${access_token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        intent: "CAPTURE",
-        purchase_units: [
-          {
-            reference_id: orderId,
-            custom_id: productIds.join(","),
-            amount: { currency_code: "USD", value: total.toFixed(2) },
-            description: "Astralium Digitale Store order",
-          },
-        ],
-        payer: { email_address: email },
-        application_context: {
-          return_url: `${base}/${locale}/success?order=${orderId}`,
-          cancel_url: `${base}/${locale}/checkout`,
-          user_action: "PAY_NOW",
-        },
+    // One shared order body for both flows (lib/paypal.ts). The SDK
+    // flow ignores the return/cancel URLs (approval happens on-page);
+    // the redirect flow lands back on the success page, where PayPal
+    // appends its order id as `token` and the page verifies against
+    // the ledger before issuing downloads.
+    const created = await createPaypalOrder(
+      accessToken,
+      buildPaypalOrderBody({
+        orderId,
+        productIds,
+        totalUSD: total,
+        email: email || null,
+        returnUrl: `${base}/${locale}/success?order=${orderId}`,
+        cancelUrl: `${base}/${locale}/checkout`,
       }),
-    });
-    const order = (await orderRes.json()) as { id?: string; links?: { rel: string; href: string }[] };
-    const approve = order.links?.find((l) => l.rel === "approve")?.href;
-    if (!orderRes.ok || !approve) {
-      if (fraudOn) await recordFailedAttempt({ email, ip: clientIp });
+    );
+    // Redirect flow needs the approve link; the SDK flow only needs
+    // the PayPal order id (the SDK renders its own approval UI).
+    if (!created || (!sdkMode && !created.approveUrl)) {
+      if (fraudOn && email) await recordFailedAttempt({ email, ip: clientIp });
       return NextResponse.json({ error: "PAYPAL_ORDER_FAILED" }, { status: 502 });
     }
     // Order ledger (F1): PENDING order anchored on the PayPal order id.
-    if (order.id) {
-      await createPendingOrder({
-        orderId, email, provider: "paypal", providerRef: order.id,
-        items: productIds.map((pid) => ({ productId: pid, priceUSD: getProductById(pid)?.priceUSD ?? 0 })),
-        totalUSD: total, currency: "USD",
-        deliveryChannel, deliverySubjectHash: deliverySubjectHash ?? null,
-        country: getClientCountry(req) ?? null, locale,
-      }).catch(() => undefined);
-    }
+    await createPendingOrder({
+      orderId, email, provider: "paypal", providerRef: created.id,
+      items: productIds.map((pid) => ({ productId: pid, priceUSD: getProductById(pid)?.priceUSD ?? 0 })),
+      totalUSD: total, currency: "USD",
+      deliveryChannel, deliverySubjectHash: deliverySubjectHash ?? null,
+      country: getClientCountry(req) ?? null, locale,
+    }).catch(() => undefined);
     await persistOrderExtras();
     await countFlashUnits();
     return NextResponse.json({
-      url: approve, providerOrderId: order.id, orderId,
+      url: created.approveUrl, providerOrderId: created.id, orderId,
       pricing: {
         subtotalUSD: Math.round(subtotal * 100) / 100,
         couponDiscountUSD, byoDiscountUSD, flashDiscountUSD, loyaltyRedeemUSD,
