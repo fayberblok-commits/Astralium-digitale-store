@@ -11,6 +11,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import type { Dict } from "../i18n/dictionaries";
+import { OPEN_CHAT_EVENT } from "../lib/chat-events";
 
 interface Msg { role: "user" | "assistant"; text: string }
 
@@ -45,6 +46,15 @@ export default function ChatWidget({ dict, locale, supportV2 = false }: { dict: 
 
   useEffect(() => {
     setTtsOk(typeof window !== "undefined" && "speechSynthesis" in window);
+  }, []);
+
+  // Owner fix (2026-11): the assistant must be openable from the
+  // storefront chrome (MobileNav's Support entry) — it listens for
+  // the shared open-chat event. Backend untouched.
+  useEffect(() => {
+    const onOpen = () => setOpen(true);
+    window.addEventListener(OPEN_CHAT_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_CHAT_EVENT, onOpen);
   }, []);
 
   function speak(text: string) {
@@ -247,8 +257,19 @@ export default function ChatWidget({ dict, locale, supportV2 = false }: { dict: 
           </form>
         </div>
       )}
-      <button type="button" className="chat-fab" onClick={() => setOpen((o) => !o)} aria-label={dict.chat_t}>
-        ✦
+      {/* Owner fix (2026-11): the smart employee was invisible — an
+          icon-only circle the mobile bottom bar covered. It is now a
+          labelled gold pill (icon + text) that sits ABOVE the mobile
+          nav; see .chat-fab in globals.css. */}
+      <button
+        type="button"
+        className="chat-fab"
+        onClick={() => setOpen((o) => !o)}
+        aria-label={dict.chat_t}
+        aria-expanded={open}
+      >
+        <span aria-hidden="true">✦</span>
+        <span className="chat-fab-label">{dict.chat_fab_label}</span>
       </button>
     </div>
   );
