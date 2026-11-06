@@ -32,6 +32,19 @@ export default function Footer({ locale, dict }: { locale: string; dict: Dict })
           <Link href={`/${locale}/support`}>{dict.support_t}</Link>
         </nav>
       </div>
+      {/* 2026-11 redesign: the mockups' centred payment chips + trust
+          line closing the footer. Brand names are proper nouns; the
+          trust line reuses the existing trust dictionary keys. */}
+      <div className="footer-pay">
+        <p className="pay-chips" aria-hidden="true">
+          <span className="pay-chip">PayPal</span>
+          <span className="pay-chip">Visa</span>
+          <span className="pay-chip">Mastercard</span>
+        </p>
+        <p className="footer-trust">
+          {dict.trust_instant} <span aria-hidden="true">•</span> {dict.trust_guarantee} <span aria-hidden="true">•</span> {dict.trust_secure}
+        </p>
+      </div>
       <p className="footer-base">
         © {new Date().getFullYear()} Astralium Digitale Store. {dict.footer_rights}
       </p>
