@@ -6,6 +6,7 @@ import { formatPrice } from "../lib/currency";
 import { priceCart } from "../lib/coupons";
 import { byoDiscount } from "../lib/byo";
 import { PRODUCTS, getProductById } from "../data/products";
+import Cover from "./Cover";
 import { normalizePhone, PHONE_COUNTRIES, countryForLocalePhone } from "../lib/phone";
 import { readPwywChoices } from "./ProductCommerce";
 import { track } from "../lib/track-client";
@@ -54,6 +55,18 @@ export default function CheckoutClient({
   // Phase 6, feature 27: reaching checkout is a funnel step (no-op
   // unless the analytics beacon is mounted).
   useEffect(() => { track("checkout_start"); }, []);
+  // 2026-11 redesign: the mockups' PayPal-branded express buttons
+  // record a provider preference before routing here; honour it when
+  // PayPal is configured. Selection only — the payment flow itself
+  // (providers offered, /api/checkout payload) is unchanged.
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("astralium-provider") === "paypal" && features.paypalConfigured) {
+        setProvider("paypal");
+      }
+    } catch { /* preference is best-effort */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [email, setEmail] = useState("");
   const [provider, setProvider] = useState<"stripe" | "paypal">(
     features.stripeConfigured ? "stripe" : "paypal",
@@ -311,15 +324,22 @@ export default function CheckoutClient({
               </div>
             </div>
           )}
-          <label>
-            {dict.provider_t}
-            <select value={provider} onChange={(e) => setProvider(e.target.value as "stripe" | "paypal")}>
-              {features.stripeConfigured && (
-                <option value="stripe">Stripe — cards, Link, iDEAL, SEPA…</option>
-              )}
-              {features.paypalConfigured && <option value="paypal">PayPal</option>}
-            </select>
-          </label>
+          {/* 2026-11 redesign: the payment method renders as the
+              mockups' selected-method card (gold border, radio dot).
+              The control inside is the same provider <select> with the
+              same options logic — only configured providers, ever. */}
+          <div className="method-card">
+            <span className="method-dot" aria-hidden="true" />
+            <label className="method-main">
+              {dict.provider_t}
+              <select value={provider} onChange={(e) => setProvider(e.target.value as "stripe" | "paypal")}>
+                {features.stripeConfigured && (
+                  <option value="stripe">Stripe — cards, Link, iDEAL, SEPA…</option>
+                )}
+                {features.paypalConfigured && <option value="paypal">PayPal</option>}
+              </select>
+            </label>
+          </div>
           {offered.length > 1 && (
             <fieldset style={{ border: "none", padding: 0, margin: 0 }}>
               <legend style={{ fontWeight: 700, marginBottom: 8 }}>{dict.delivery_title}</legend>
@@ -455,19 +475,28 @@ export default function CheckoutClient({
           <button type="button" className="btn btn-grad btn-lg" disabled={busy} data-loading={busy || undefined} onClick={() => pay()}>
             🔒 {busy ? dict.processing : `${dict.pay_btn} · ${formatPrice(totals.total, currency, locale)}`}
           </button>
+          <p className="secure-note">🔒 {dict.checkout_secure_note}</p>
           <p className="muted">Visa · Mastercard · Amex · Apple Pay · Google Pay · Link · iDEAL · SEPA · PayPal — {dict.trust_secure}</p>
         </div>
       </div>
-      <div className="panel">
-        <h2 style={{ marginTop: 0 }}>{dict.cart_t}</h2>
+      <div className="panel summary-panel">
+        <h2 style={{ marginTop: 0 }}>{dict.checkout_summary}</h2>
         {cart.map((i) => (
-          <p key={i.id} className="summary-row">
-            <span>{i.title}</span>
+          <div key={i.id} className="summary-row sum-item">
+            <span className="sum-thumb" aria-hidden="true">
+              <Cover
+                title={i.title}
+                category={i.kind === "product" ? (getProductById(i.id)?.category ?? "ebooks") : "templates"}
+                hue={i.hue}
+                size="sm"
+              />
+            </span>
+            <span className="grow">{i.title}</span>
             <span>
               {displayPrice(i) !== i.priceUSD && <s style={{ marginRight: 6 }}>{formatPrice(i.priceUSD, currency, locale)}</s>}
               {formatPrice(displayPrice(i), currency, locale)}
             </span>
-          </p>
+          </div>
         ))}
         {bumps.filter((b) => selectedBumps.includes(b.productId)).map((b) => (
           <p key={b.productId} className="summary-row">
