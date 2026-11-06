@@ -161,6 +161,30 @@ export const PALETTES: Palette[] = [
       ...OK_ERR_DARK,
     },
   },
+  {
+    // The owner's approved 2026-11 redesign ("Astralium Noir"): deep
+    // matte black, luminous metallic gold, jewel-violet reserved for
+    // glows/gems in CSS. Gradient stops are the mockup's gold ramp
+    // (#FFE9A8 → #EFC65E → #C9962E family); text on them is the deep
+    // ink #241A05, which passes AA on every stop. The light mode is
+    // the same identity on warm ivory (gold deepened for AA text).
+    id: "astralium-noir",
+    grad: ["#efc65e", "#c9962e", "#e9bc55", "#d9a83f"],
+    onGrad: "#241a05",
+    glow: "rgba(233, 188, 85, 0.45)",
+    light: {
+      bg: "#f7f1e3", bg2: "#efe5cf", surface: "#fbf6ea", surfaceStrong: "#fffdf6",
+      text: "#171106", muted: "#5e5748", accent: "#a8842c", accentDeep: "#85661d",
+      accentInk: "#7d5f1a", champagne: "#d6be8c", btnBg: "#171106", btnText: "#f6d98b",
+      ...OK_ERR_LIGHT,
+    },
+    dark: {
+      bg: "#07070b", bg2: "#0d0b16", surface: "#12101d", surfaceStrong: "#171329",
+      text: "#ede6d6", muted: "#b9ae97", accent: "#c9962e", accentDeep: "#9a742a",
+      accentInk: "#efc65e", champagne: "#f6d98b", btnBg: "#171106", btnText: "#f6d98b",
+      ...OK_ERR_DARK,
+    },
+  },
 ];
 
 export const PALETTE_IDS = PALETTES.map((p) => p.id);
