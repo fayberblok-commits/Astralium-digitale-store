@@ -28,12 +28,16 @@ function buildCsp(nonce: string): string {
   const dev = process.env.NODE_ENV !== "production";
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}'${dev ? " 'unsafe-eval'" : ""}`,
+    // Owner fix (2026-11): the PayPal JS SDK (Smart Buttons + hosted
+    // Card Fields) loads from www.paypal.com and renders its fields
+    // in PayPal iframes — those origins join script-src / frame-src
+    // / connect-src. Our own scripts stay nonce-only.
+    `script-src 'self' 'nonce-${nonce}' https://www.paypal.com https://www.sandbox.paypal.com${dev ? " 'unsafe-eval'" : ""}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
-    "connect-src 'self' https://api.stripe.com https://checkout.stripe.com https://api-m.paypal.com https://api-m.sandbox.paypal.com https://api.openai.com https://api.resend.com https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com",
-    "frame-src https://checkout.stripe.com https://www.paypal.com https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com",
+    "connect-src 'self' https://api.stripe.com https://checkout.stripe.com https://api-m.paypal.com https://api-m.sandbox.paypal.com https://www.paypal.com https://www.sandbox.paypal.com https://c.paypal.com https://c6.paypal.com https://api.openai.com https://api.resend.com https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com",
+    "frame-src https://checkout.stripe.com https://www.paypal.com https://www.sandbox.paypal.com https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com",
     "form-action 'self' https://checkout.stripe.com https://www.paypal.com",
     "base-uri 'self'",
     "frame-ancestors 'none'",
