@@ -44,6 +44,13 @@ export default function Header({
           <CartLink locale={locale} label={dict.nav_cart} />
         </div>
       </div>
+      {/* 2026-11 redesign: the masthead's thin gold rule with the
+          centre diamond ornament from the approved mockups. On the
+          astralium-noir palette it carries the owner's animated
+          colour cycle (see .cycle-line in globals.css). */}
+      <div className="header-rule cycle-line" aria-hidden="true">
+        <span className="header-rule-gem">· · · ❖ · · ·</span>
+      </div>
     </header>
   );
 }
