@@ -7,6 +7,7 @@ import { formatPrice } from "../lib/currency";
 import { priceCart } from "../lib/coupons";
 import { byoDiscount, BYO_MIN_ITEMS } from "../lib/byo";
 import { PRODUCTS } from "../data/products";
+import Cover from "./Cover";
 import RecommendationsRail from "./RecommendationsRail";
 
 export default function CartClient({ locale, dict, currency }: { locale: string; dict: Dict; currency: string }) {
@@ -56,7 +57,16 @@ export default function CartClient({ locale, dict, currency }: { locale: string;
       <div className="panel">
         {cart.map((item) => (
           <div key={item.id} className="cart-line">
-            <span aria-hidden="true" style={{ fontSize: "1.4rem" }}>✦</span>
+            {/* 2026-11 redesign: real cover thumbnails replace the
+                placeholder star, matching the mockups' cart/summary. */}
+            <span className="cart-thumb" aria-hidden="true">
+              <Cover
+                title={item.title}
+                category={item.kind === "product" ? (PRODUCTS.find((p) => p.id === item.id)?.category ?? "ebooks") : "templates"}
+                hue={item.hue}
+                size="sm"
+              />
+            </span>
             <span className="grow">
               <strong>{item.title}</strong>
               <br />
