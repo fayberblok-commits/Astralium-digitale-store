@@ -1,10 +1,14 @@
 /**
- * CSS-generated cover art — zero external images, so the store is fast,
- * self-contained and never breaks on a missing asset. Each product's hue
- * deterministically selects one of the maison's classic deep duotones
- * (forest, burgundy, navy, charcoal, bronze, petrol, oxblood, espresso),
- * finished with a gilt inner frame and serif title via .cover in CSS.
+ * Cover art. The five real books ship their printed cover artwork as
+ * data-URI assets (assets/covers.ts): when a product id matches, the
+ * REAL cover renders inside a thin LED frame (.led-cover, cycling
+ * with the owner's colour track). Every other product keeps the
+ * original CSS-generated art — zero external images, deterministic
+ * deep duotones (forest, burgundy, navy, charcoal, bronze, petrol,
+ * oxblood, espresso) with a gilt inner frame and serif title.
  */
+import { coverImageFor } from "../assets/covers";
+
 const MOTIFS: Record<string, string> = {
   ebooks: "✦",
   audiobooks: "♪",
@@ -32,12 +36,27 @@ export default function Cover({
   category,
   hue,
   size = "md",
+  id,
 }: {
   title: string;
   category: string;
   hue: number;
   size?: "sm" | "md" | "lg";
+  /** Product id — when it names one of the five real books, the
+   *  printed cover artwork renders instead of the CSS duotone. */
+  id?: string;
 }) {
+  const image = id ? coverImageFor(id) : null;
+  if (image) {
+    return (
+      <div className={`cover cover-img cover-${size} led-cover`} aria-hidden="true">
+        {/* Plain <img> by design: the codebase self-hosts all imagery
+            and does not use the next/image optimizer anywhere. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={image} alt="" width={720} height={1080} />
+      </div>
+    );
+  }
   const motif = MOTIFS[category] ?? "✦";
   const [lit, mid, deep] = PALETTES[Math.abs(Math.round(hue)) % PALETTES.length];
   return (
