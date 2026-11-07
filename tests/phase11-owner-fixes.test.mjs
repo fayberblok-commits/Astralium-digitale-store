@@ -10,7 +10,7 @@ const {
   EXPRESS_QUERY_PARAM, isExpressId, parseExpressId, expressCheckoutHref,
   checkoutItemsFor, shouldClearCart,
 } = await import("../src/lib/express.ts");
-const { buildPaypalOrderBody } = await import("../src/lib/paypal.ts");
+const { buildPaypalOrderBody, getPaypalClientToken } = await import("../src/lib/paypal.ts");
 const orders = await import("../src/lib/orders.ts");
 
 /* ── (b) checkout email is OPTIONAL ─────────────────────────────── */
@@ -105,6 +105,59 @@ test("paypal order body: no payer block at all when the buyer skipped email", ()
     });
     assert.equal("payer" in body, false, String(email));
     assert.equal(body.purchase_units[0].amount.value, "19.50"); // cents always two decimals
+  }
+});
+
+/* ── (a2) Card Fields client token: failures are always soft null ── */
+
+test("paypal client token: null when PayPal is not configured", async () => {
+  const savedId = process.env.PAYPAL_CLIENT_ID;
+  const savedSecret = process.env.PAYPAL_CLIENT_SECRET;
+  delete process.env.PAYPAL_CLIENT_ID;
+  delete process.env.PAYPAL_CLIENT_SECRET;
+  try {
+    assert.equal(await getPaypalClientToken(), null);
+  } finally {
+    if (savedId === undefined) delete process.env.PAYPAL_CLIENT_ID; else process.env.PAYPAL_CLIENT_ID = savedId;
+    if (savedSecret === undefined) delete process.env.PAYPAL_CLIENT_SECRET; else process.env.PAYPAL_CLIENT_SECRET = savedSecret;
+  }
+});
+
+test("paypal client token: minted token returned; any upstream failure → null", async () => {
+  const saved = {
+    id: process.env.PAYPAL_CLIENT_ID, secret: process.env.PAYPAL_CLIENT_SECRET, env: process.env.PAYPAL_ENV,
+  };
+  const realFetch = globalThis.fetch;
+  process.env.PAYPAL_CLIENT_ID = "cid";
+  process.env.PAYPAL_CLIENT_SECRET = "secret";
+  process.env.PAYPAL_ENV = "sandbox";
+  try {
+    // Happy path: OAuth access token, then generate-token with it.
+    const seen = [];
+    globalThis.fetch = async (url, init) => {
+      seen.push({ url: String(url), auth: init?.headers?.Authorization });
+      if (String(url).endsWith("/v1/oauth2/token")) {
+        return { ok: true, json: async () => ({ access_token: "AT-1" }) };
+      }
+      return { ok: true, json: async () => ({ client_token: "CT-1" }) };
+    };
+    assert.equal(await getPaypalClientToken(), "CT-1");
+    assert.equal(seen.length, 2);
+    assert.match(seen[1].url, /\/v1\/identity\/generate-token$/);
+    assert.equal(seen[1].auth, "Bearer AT-1");
+    // generate-token rejected → null.
+    globalThis.fetch = async (url) => (String(url).endsWith("/v1/oauth2/token")
+      ? { ok: true, json: async () => ({ access_token: "AT-1" }) }
+      : { ok: false, json: async () => ({}) });
+    assert.equal(await getPaypalClientToken(), null);
+    // Network throw → null, never an exception.
+    globalThis.fetch = async () => { throw new Error("offline"); };
+    assert.equal(await getPaypalClientToken(), null);
+  } finally {
+    globalThis.fetch = realFetch;
+    if (saved.id === undefined) delete process.env.PAYPAL_CLIENT_ID; else process.env.PAYPAL_CLIENT_ID = saved.id;
+    if (saved.secret === undefined) delete process.env.PAYPAL_CLIENT_SECRET; else process.env.PAYPAL_CLIENT_SECRET = saved.secret;
+    if (saved.env === undefined) delete process.env.PAYPAL_ENV; else process.env.PAYPAL_ENV = saved.env;
   }
 });
 
