@@ -256,7 +256,7 @@ export async function POST(req: NextRequest) {
   const bumpLines: { productId: string; title: string; priceUSD: number }[] = [];
   if (Array.isArray(body.bumpProductIds) && body.bumpProductIds.length > 0 && (await getFlag("order_bump"))) {
     const config = await getOfferConfig();
-    for (const line of resolveBumps(standaloneIds, body.bumpProductIds, config)) {
+    for (const line of resolveBumps(standaloneIds, body.bumpProductIds, config, catalogProducts)) {
       bumpLines.push({ productId: line.productId, title: line.title, priceUSD: line.priceUSD });
       productIds.push(line.productId);
       lineItems.push({ title: `${line.title} (bump −${line.discountPercent}%)`, amountUSD: line.priceUSD });
