@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
-import { getProductById, PRODUCTS } from "../../../data/products";
+import { getStorefrontProducts } from "../../../lib/catalog";
 import { resolveBundle } from "../../../lib/bundles";
 import { byoDiscount, round2 } from "../../../lib/byo";
 import { getFlag } from "../../../lib/flags";
@@ -121,13 +121,19 @@ export async function POST(req: NextRequest) {
   // Resolve items server-side (client prices are never trusted). Bundles
   // stay a single line at the bundle price; their products are recorded
   // for fulfilment.
+  // Catalog resolution is DB-first (lib/catalog): office-created
+  // products live ONLY in the resolved catalog, not in the static seed
+  // list — resolving against the seed alone made real products
+  // unbuyable (UNKNOWN_ITEM) and priced ledger items at $0.
+  const catalogProducts = await getStorefrontProducts();
+  const catalogById = new Map(catalogProducts.map((p) => [p.id, p]));
   const productIds: string[] = [];
   const standaloneIds: string[] = []; // direct product items (BYO counts these)
   const lineItems: { title: string; amountUSD: number }[] = [];
   const lineProductIds: (string | null)[] = []; // aligned with lineItems (null = bundle line)
   let subtotal = 0;
   for (const ref of body.items) {
-    const product = getProductById(ref.id);
+    const product = catalogById.get(ref.id);
     if (product) {
       productIds.push(product.id);
       standaloneIds.push(product.id);
@@ -165,7 +171,7 @@ export async function POST(req: NextRequest) {
   const flashUnitsBySale = new Map<string, number>();
   if (await getFlag("flash_sales")) {
     const sales = await listFlashSales();
-    const flashPrices = resolveFlashPrices(sales, standaloneIds, getProductById);
+    const flashPrices = resolveFlashPrices(sales, standaloneIds, (id) => catalogById.get(id));
     for (const fp of flashPrices.values()) {
       adjustLine(fp.productId, fp.priceUSD);
       flashDiscountUSD = round2(flashDiscountUSD + (fp.fullPriceUSD - fp.priceUSD));
@@ -184,7 +190,7 @@ export async function POST(req: NextRequest) {
     const config = await getPwywConfig();
     for (const [pid, choice] of Object.entries(body.pwyw)) {
       if (!standaloneIds.includes(pid)) continue;
-      const product = getProductById(pid);
+      const product = catalogById.get(pid);
       if (!product) continue;
       const resolved = resolvePwywPrice(config, product, choice ?? {});
       if (!resolved.ok) {
@@ -249,7 +255,7 @@ export async function POST(req: NextRequest) {
   // itemized separately from any coupon.
   let byoDiscountUSD = 0;
   if (await getFlag("bundles")) {
-    byoDiscountUSD = byoDiscount(standaloneIds, PRODUCTS).discountUSD;
+    byoDiscountUSD = byoDiscount(standaloneIds, catalogProducts).discountUSD;
   }
   const couponDiscountUSD = discount; // coupon only — BYO is itemized separately
   discount += byoDiscountUSD;
@@ -369,7 +375,7 @@ export async function POST(req: NextRequest) {
     if (session.id) {
       await createPendingOrder({
         orderId, email, provider: "stripe", providerRef: session.id,
-        items: productIds.map((pid) => ({ productId: pid, priceUSD: getProductById(pid)?.priceUSD ?? 0 })),
+        items: productIds.map((pid) => ({ productId: pid, priceUSD: catalogById.get(pid)?.priceUSD ?? 0 })),
         totalUSD: total, currency: "USD",
         deliveryChannel, deliverySubjectHash: deliverySubjectHash ?? null,
         country: getClientCountry(req) ?? null, locale,
@@ -418,7 +424,7 @@ export async function POST(req: NextRequest) {
     // Order ledger (F1): PENDING order anchored on the PayPal order id.
     await createPendingOrder({
       orderId, email, provider: "paypal", providerRef: created.id,
-      items: productIds.map((pid) => ({ productId: pid, priceUSD: getProductById(pid)?.priceUSD ?? 0 })),
+      items: productIds.map((pid) => ({ productId: pid, priceUSD: catalogById.get(pid)?.priceUSD ?? 0 })),
       totalUSD: total, currency: "USD",
       deliveryChannel, deliverySubjectHash: deliverySubjectHash ?? null,
       country: getClientCountry(req) ?? null, locale,
