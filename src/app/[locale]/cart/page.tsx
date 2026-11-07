@@ -1,5 +1,6 @@
 import { getDictionary } from "../../../i18n/dictionaries";
 import { currentCurrency } from "../../../lib/server";
+import { getStorefrontProducts } from "../../../lib/catalog";
 import CartClient from "../../../components/CartClient";
 import CartRecover from "../../../components/CartRecover";
 
@@ -7,11 +8,12 @@ export default async function CartPage({ params }: { params: Promise<{ locale: s
   const { locale } = await params;
   const dict = getDictionary(locale);
   const currency = await currentCurrency(locale);
+  const products = await getStorefrontProducts(locale);
   return (
     <>
       <h1 className="lux-title">{dict.cart_t}</h1>
       <CartRecover dict={dict} />
-      <CartClient locale={locale} dict={dict} currency={currency} />
+      <CartClient locale={locale} dict={dict} currency={currency} products={products} />
     </>
   );
 }
