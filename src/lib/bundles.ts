@@ -2,9 +2,10 @@
  * Owner bundles store (Phase 3, feature 3).
  *
  * Bundles persist to the DB Bundle table when configured, else to
- * .data/bundles.json (same pattern as bindings/versions). When NO stored
- * bundles exist, the storefront keeps using the file-catalog BUNDLES —
- * stored bundles replace them only once the owner creates one.
+ * .data/bundles.json (same pattern as bindings/versions). Only
+ * owner-stored bundles are sellable, and only while every component
+ * still resolves in the live catalog (thermal fix, 2026-11 — the
+ * Phase-1 seed bundles of demo products are no longer a fallback).
  *
  * Prices are never stored from client input: a stored bundle carries a
  * discountPercent and its price is derived from catalog prices via
@@ -13,8 +14,9 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { getDb } from "./db.ts";
-import { PRODUCTS, BUNDLES, type Bundle } from "../data/products.ts";
-import { computeBundlePrice } from "./byo.ts";
+import { type Bundle } from "../data/products.ts";
+import { computeBundlePrice, type PricedItem } from "./byo.ts";
+import { getStorefrontProducts } from "./catalog.ts";
 
 export interface StoredBundle {
   id: string;
@@ -130,8 +132,8 @@ export async function deleteStoredBundle(id: string): Promise<{ persisted: "db" 
 }
 
 /** Convert a stored bundle to the storefront Bundle shape (derived price). */
-export function toStorefrontBundle(b: StoredBundle): Bundle {
-  const { priceUSD } = computeBundlePrice(b.productIds, b.discountPercent, PRODUCTS);
+export function toStorefrontBundle(b: StoredBundle, catalog: PricedItem[]): Bundle {
+  const { priceUSD } = computeBundlePrice(b.productIds, b.discountPercent, catalog);
   return {
     id: b.id,
     slug: b.id,
@@ -144,20 +146,30 @@ export function toStorefrontBundle(b: StoredBundle): Bundle {
 }
 
 /**
- * Storefront bundles: active stored bundles when the owner has created
- * any, otherwise the file-catalog bundles (unchanged Phase-1 behavior).
+ * A stored bundle is sellable only while EVERY component resolves in
+ * the live (DB-first) catalog. The Phase-1 seed bundles are gone from
+ * the sellable set entirely (thermal fix): their components are
+ * deactivated demo products, yet the seed fallback kept them buyable
+ * through the API — a buyer would have paid for trial deliverables.
  */
-export async function storefrontBundles(): Promise<Bundle[]> {
+async function sellableStoredBundles(): Promise<Bundle[]> {
   const { bundles } = await listStoredBundles();
   const active = bundles.filter((b) => b.active);
-  if (active.length === 0) return BUNDLES;
-  return active.map(toStorefrontBundle);
+  if (active.length === 0) return [];
+  const catalog = await getStorefrontProducts();
+  const catalogIds = new Set(catalog.map((p) => p.id));
+  return active
+    .filter((b) => b.productIds.length > 0 && b.productIds.every((pid) => catalogIds.has(pid)))
+    .map((b) => toStorefrontBundle(b, catalog));
 }
 
-/** Resolve a bundle id at checkout: stored bundles first, then catalog. */
+/** Storefront bundles: the owner's active, fully-resolvable bundles. */
+export async function storefrontBundles(): Promise<Bundle[]> {
+  return sellableStoredBundles();
+}
+
+/** Resolve a bundle id at checkout: owner-stored bundles only. */
 export async function resolveBundle(id: string): Promise<Bundle | undefined> {
-  const { bundles } = await listStoredBundles();
-  const stored = bundles.find((b) => b.id === id && b.active);
-  if (stored) return toStorefrontBundle(stored);
-  return BUNDLES.find((b) => b.id === id);
+  const sellable = await sellableStoredBundles();
+  return sellable.find((b) => b.id === id);
 }
