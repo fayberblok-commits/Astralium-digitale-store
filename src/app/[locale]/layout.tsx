@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import "../globals.css";
@@ -43,6 +43,21 @@ import InstallPrompt from "../../components/InstallPrompt";
 export function generateStaticParams() {
   return LOCALE_CODES.map((locale) => ({ locale }));
 }
+
+// Unified display standard (owner's order, 2026-11-07, register item 83):
+// the store shows the SAME wide composition with the SAME proportions on
+// every device and browser, desktop mode on or off — «تبقى المقاسات كما
+// هي». A fixed 980px layout viewport makes phone browsers render the
+// complete wide design and scale it to fit the screen instead of
+// re-stacking it under the ≤700px media queries (which therefore simply
+// never engage on real phones; the responsive CSS stays for desktop and
+// future use). initialScale is forced to undefined on purpose: Next's
+// default viewport would otherwise inherit initial-scale=1 into the
+// emitted meta, and a fixed scale of 1 makes the phone show a cropped
+// slice of the 980px layout instead of auto-fitting it (verified by
+// device emulation). With only width=980 emitted, the browser auto-fits
+// 980 → screen and the customer pinches to read.
+export const viewport: Viewport = { width: 980, initialScale: undefined };
 
 export async function generateMetadata({
   params,
