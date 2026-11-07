@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../lib/flags";
 import { getDb } from "../../../lib/db";
 import { scoreRecommendations, basketsFromOrders } from "../../../lib/recommendations";
-import { getProductById } from "../../../data/products";
+import { getStorefrontProducts } from "../../../lib/catalog";
 
 export const runtime = "nodejs";
 
@@ -11,6 +11,12 @@ export const runtime = "nodejs";
  * from DB orders as product-id lists ONLY — the aggregator never sees an
  * email (see src/lib/recommendations.ts). Without a DB, baskets are
  * empty and the engine serves its catalog-affinity fallback.
+ *
+ * Catalog discipline (register item 82 fix): scoring runs over the LIVE
+ * storefront catalog only, and every recommendation carries its full
+ * storefront product in the payload — the client renders exactly what
+ * the server sends and never resolves ids against any local list, so a
+ * deactivated/demo product can never appear in the rail again.
  */
 export async function GET(req: NextRequest) {
   if (!(await getFlag("recommendations"))) {
@@ -35,13 +41,15 @@ export async function GET(req: NextRequest) {
   } catch {
     baskets = [];
   }
-  const recs = scoreRecommendations({ baskets, targetId: productId, viewedIds: viewed, excludeIds: exclude, limit: 4 });
+  const catalog = await getStorefrontProducts();
+  const byId = new Map(catalog.map((p) => [p.id, p]));
+  const recs = scoreRecommendations({ baskets, targetId: productId, viewedIds: viewed, excludeIds: exclude, catalog, limit: 4 });
   return NextResponse.json({
     source: baskets.length > 0 ? "co-purchase" : "catalog-affinity",
     recommendations: recs
       .map((r) => {
-        const p = getProductById(r.productId);
-        return p ? { id: p.id, slug: p.slug, title: p.title, reason: r.reason, coCount: r.coCount ?? null } : null;
+        const p = byId.get(r.productId);
+        return p ? { id: p.id, slug: p.slug, title: p.title, reason: r.reason, coCount: r.coCount ?? null, product: p } : null;
       })
       .filter(Boolean),
   });
