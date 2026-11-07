@@ -16,9 +16,8 @@
  * Delivery itself never depends on email — the success page issues
  * the signed download links.
  */
-import { createDownloadToken } from "./tokens.ts";
+import { markPaidAndGrant, setOrderEmailIfEmpty, grantTokensForOrder, type OrderRecord } from "./orders.ts";
 import { sendEmail, receiptEmailHtml } from "../services/email.ts";
-import { markPaidAndGrant, setOrderEmailIfEmpty, type OrderRecord } from "./orders.ts";
 // siteUrl comes from lib/server.ts, which imports next/headers — it is
 // loaded lazily inside fulfilPaypalOrder so this module stays
 // importable in plain node contexts (the unit tests pin the pure
@@ -303,7 +302,12 @@ export async function fulfilPaypalOrder(
   }
   if (ledger.duplicate) return;
   const { siteUrl } = await import("./server.ts");
-  const grantTokens = new Map(ledger.grants.map((g) => [g.productId, g.token]));
+  // Finding 74: EVERY link in this email is the order's grant token —
+  // grantTokensForOrder re-derives the full live set (the just-issued
+  // grants included), so the old grant-less fallback token is gone:
+  // a product with no live grant gets no link here rather than an
+  // ungoverned one (the success page remains the buyer's path).
+  const grantTokens = await grantTokensForOrder(effective);
   // Titles resolve from the real catalog (DB-first, all products —
   // a just-bought item must resolve even if later deactivated).
   // Loaded lazily like lib/server above so this module stays
@@ -316,10 +320,14 @@ export async function fulfilPaypalOrder(
   const links = effective.items
     .map((item) => catalogById.get(item.productId))
     .filter((p): p is NonNullable<typeof p> => Boolean(p))
-    .map((p) => ({
-      title: p.title,
-      downloadUrl: `${siteUrl()}/api/download/${grantTokens.get(p.id) ?? createDownloadToken(p.id, effective.id)}`,
-    }));
+    .flatMap((p) => {
+      const token = grantTokens.get(p.id);
+      if (!token) {
+        console.log(JSON.stringify({ event: "order.fulfil.no-grant-token", orderId: effective.id, productId: p.id }));
+        return [];
+      }
+      return [{ title: p.title, downloadUrl: `${siteUrl()}/api/download/${token}` }];
+    });
   console.log(JSON.stringify({ event: "order.fulfilled", orderId: effective.id, via, captureId }));
   if (effective.email && links.length > 0) {
     await sendEmail({
