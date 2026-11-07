@@ -49,7 +49,7 @@ test("stored bundles persist via the .data fallback and drive the storefront", a
   const mine = list.find((b) => b.id === createdBundleId);
   assert.ok(mine);
   const expectedPrice = Math.round(110 * 0.75 * 100) / 100;
-  assert.equal(bundles.toStorefrontBundle(mine).priceUSD, expectedPrice);
+  assert.equal(bundles.toStorefrontBundle(mine, PRODUCTS).priceUSD, expectedPrice);
   const storefront = await bundles.storefrontBundles();
   assert.ok(storefront.some((b) => b.id === createdBundleId));
   const resolved = await bundles.resolveBundle(createdBundleId);
