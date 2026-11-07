@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../lib/flags";
 import { getOfferConfig } from "../../../lib/offers";
-import { getProductById } from "../../../data/products";
+import { getStorefrontProducts } from "../../../lib/catalog";
 
 export const runtime = "nodejs";
 
@@ -9,16 +9,20 @@ export const runtime = "nodejs";
  * Public offer lookup for checkout + success pages (Phase 3, feature 4).
  * Flag-gated: when order_bump is off this 403s and the UI hides itself.
  * Returns only product ids + percents from the server config.
+ * Products are described from the LIVE storefront catalog (register
+ * item 82 fix): an offer pointing at a product that is not on sale
+ * describes nothing.
  */
 export async function GET(req: NextRequest) {
   if (!(await getFlag("order_bump"))) {
     return NextResponse.json({ error: "FEATURE_DISABLED" }, { status: 403 });
   }
   const config = await getOfferConfig();
+  const byId = new Map((await getStorefrontProducts()).map((p) => [p.id, p]));
   const productId = req.nextUrl.searchParams.get("productId");
   const describe = (slot?: { productId: string; discountPercent: number }) => {
     if (!slot) return undefined;
-    const p = getProductById(slot.productId);
+    const p = byId.get(slot.productId);
     return p ? { productId: p.id, slug: p.slug, title: p.title, priceUSD: p.priceUSD, discountPercent: slot.discountPercent } : undefined;
   };
   if (productId) {
