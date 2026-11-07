@@ -1,10 +1,12 @@
 import { ImageResponse } from "next/og";
-import { getProductBySlug } from "../../../../data/products";
+import { getStorefrontProductBySlug } from "../../../../lib/catalog";
 
 /**
  * Per-product Open Graph image (Phase 5, SEO engine): the product title
  * and its real catalog price on the luxury-classic brand card. Falls
- * back to the store card for unknown slugs.
+ * back to the store card for unknown slugs. Resolves through the live
+ * storefront catalog (register item 82 fix) — a deactivated product's
+ * share card can no longer advertise it.
  */
 export const alt = "Astralium Digitale Store — product";
 export const size = { width: 1200, height: 630 };
@@ -12,7 +14,7 @@ export const contentType = "image/png";
 
 export default async function Image({ params }: { params: Promise<{ locale: string; slug: string }> }) {
   const { slug } = await params;
-  const product = getProductBySlug(slug);
+  const product = await getStorefrontProductBySlug(slug);
   return new ImageResponse(
     (
       <div
