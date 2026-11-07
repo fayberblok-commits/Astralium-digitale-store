@@ -5,9 +5,11 @@ import { NextRequest, NextResponse } from "next/server";
 // and fulfilment live in lib/paypal.ts (2026-11), shared with the
 // redirect checkout and the on-page JS SDK capture endpoint so the
 // money logic exists exactly once.
-import { applyDispute, applyRefund, getOrderByRef } from "../../../../lib/orders";
-import { capturePaypalOrder, fulfilPaypalOrder, getPaypalAccessToken, verifyPaypalWebhookEvent } from "../../../../lib/paypal";
+import { applyDispute, applyRefund, createPendingOrder, getOrderByRef, type OrderRecord } from "../../../../lib/orders";
+import { capturePaypalOrder, fulfilPaypalOrder, getPaypalAccessToken, getPaypalOrder, verifyPaypalWebhookEvent } from "../../../../lib/paypal";
+import { getStorefrontProducts } from "../../../../lib/catalog";
 import { recordSecurityEvent } from "../../../../lib/security-log";
+import { recordOwnerEvent } from "../../../../lib/owner-alerts";
 
 export const runtime = "nodejs";
 
@@ -35,6 +37,48 @@ function relatedOrderId(resource: Record<string, unknown>): string | null {
   return typeof custom === "string" && custom ? custom : null;
 }
 
+/**
+ * Ledger reconstruction (defence in depth): an approved PayPal order
+ * whose PENDING ledger row is missing must never be answered with a
+ * silent 200 — money would sit approved, uncaptured, invisible. The
+ * ledger row is rebuilt from PayPal's own verified order data
+ * (reference_id = our order id, custom_id = the product ids, amount =
+ * the order total), priced from the real catalog. Returns null when
+ * the order cannot be trusted/rebuilt (caller then answers 5xx so
+ * PayPal keeps retrying and the owner alert below has fired).
+ */
+async function ensureLedgerOrder(token: string, paypalOrderId: string): Promise<OrderRecord | null> {
+  const existing = await getOrderByRef(paypalOrderId);
+  if (existing) return existing;
+  const details = await getPaypalOrder(token, paypalOrderId);
+  if (!details?.referenceId || !details.customId || details.amountUSD === null) return null;
+  const ids = details.customId.split(",").map((s) => s.trim()).filter(Boolean);
+  // custom_id carries the ORDER id (not product ids) when the id list
+  // exceeded PayPal's 127-char cap — items are then unknowable here.
+  if (ids.length === 1 && ids[0] === details.referenceId) return null;
+  const catalog = await getStorefrontProducts().catch(() => []);
+  const byId = new Map(catalog.map((p) => [p.id, p]));
+  if (ids.some((id) => !byId.has(id))) return null;
+  const items = ids.map((id) => ({ productId: id, priceUSD: byId.get(id)?.priceUSD ?? 0 }));
+  const priced = Math.round(items.reduce((s, i) => s + i.priceUSD, 0) * 100) / 100;
+  if (Math.abs(priced - details.amountUSD) > 0.01) return null;
+  const order = await createPendingOrder({
+    orderId: details.referenceId,
+    email: details.payerEmail ?? "",
+    provider: "paypal",
+    providerRef: paypalOrderId,
+    items,
+    totalUSD: details.amountUSD,
+    currency: "USD",
+    deliveryChannel: "email",
+    deliverySubjectHash: null,
+    country: null,
+    locale: "en",
+  });
+  console.log(JSON.stringify({ event: "paypal.ledger-reconstructed", orderId: order.id, paypalOrderId }));
+  return order;
+}
+
 export async function POST(req: NextRequest) {
   const webhookId = process.env.PAYPAL_WEBHOOK_ID;
   const clientId = process.env.PAYPAL_CLIENT_ID;
@@ -49,9 +93,12 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "BAD_JSON" }, { status: 400 });
   }
-  if (event.id) {
-    if (processed.has(event.id)) return NextResponse.json({ received: true, duplicate: true });
-    processed.add(event.id);
+  // Dedupe AFTER signature verification and only once handling has
+  // SUCCEEDED: marking an event processed on first sight used to
+  // swallow PayPal's retries after a bad-signature delivery, a failed
+  // capture, or a mid-fulfilment throw — permanently, per instance.
+  if (event.id && processed.has(event.id)) {
+    return NextResponse.json({ received: true, duplicate: true });
   }
 
   const token = await getPaypalAccessToken();
@@ -65,22 +112,48 @@ export async function POST(req: NextRequest) {
 
   if (type === "CHECKOUT.ORDER.APPROVED") {
     const paypalOrderId = typeof resource["id"] === "string" ? resource["id"] : "";
-    const order = paypalOrderId ? await getOrderByRef(paypalOrderId) : null;
-    if (!order) return NextResponse.json({ received: true, note: "order-not-in-ledger" });
+    const order = paypalOrderId ? await ensureLedgerOrder(token, paypalOrderId) : null;
+    if (!order) {
+      // Approved money we cannot account for: alert the owner and
+      // answer 5xx so PayPal keeps retrying — never a silent 200.
+      console.log(JSON.stringify({ event: "paypal.approved-not-in-ledger", paypalOrderId }));
+      void recordOwnerEvent({
+        kind: "security_alert",
+        title: `PayPal approved order ${paypalOrderId} is not in the ledger`,
+        detail: { paypalOrderId, eventType: type },
+      }).catch(() => undefined);
+      return NextResponse.json({ error: "ORDER_NOT_IN_LEDGER" }, { status: 500 });
+    }
     // Capture now — approval alone is not payment.
     const cap = await capturePaypalOrder(token, paypalOrderId);
     if (cap.ok) {
       await fulfilPaypalOrder(order, cap.captureId, { payerEmail: cap.payerEmail });
     } else {
       console.log(JSON.stringify({ event: "paypal.capture-incomplete", orderId: order.id, status: cap.status ?? null }));
+      // A PENDING capture completes later and re-fires via
+      // PAYMENT.CAPTURE.COMPLETED; anything else leaves the order
+      // unpaid — retrying this event cannot change it, so the event
+      // is still marked processed below.
     }
+    if (event.id) processed.add(event.id);
     return NextResponse.json({ received: true });
   }
 
   if (type === "PAYMENT.CAPTURE.COMPLETED") {
     const paypalOrderId = relatedOrderId(resource);
-    const order = paypalOrderId ? await getOrderByRef(paypalOrderId) : null;
-    if (order) await fulfilPaypalOrder(order, typeof resource["id"] === "string" ? resource["id"] : null);
+    const order = paypalOrderId ? await ensureLedgerOrder(token, paypalOrderId) : null;
+    if (order) {
+      await fulfilPaypalOrder(order, typeof resource["id"] === "string" ? resource["id"] : null);
+    } else if (paypalOrderId) {
+      console.log(JSON.stringify({ event: "paypal.capture-not-in-ledger", paypalOrderId }));
+      void recordOwnerEvent({
+        kind: "security_alert",
+        title: `PayPal capture completed for unknown order ${paypalOrderId}`,
+        detail: { paypalOrderId, eventType: type },
+      }).catch(() => undefined);
+      return NextResponse.json({ error: "ORDER_NOT_IN_LEDGER" }, { status: 500 });
+    }
+    if (event.id) processed.add(event.id);
     return NextResponse.json({ received: true });
   }
 
@@ -93,6 +166,7 @@ export async function POST(req: NextRequest) {
         await recordSecurityEvent({ kind: "order_refunded", actor: "paypal", detail: { orderRef: paypalOrderId, revokedGrants: r.revoked } });
       }
     }
+    if (event.id) processed.add(event.id);
     return NextResponse.json({ received: true });
   }
 
@@ -103,9 +177,11 @@ export async function POST(req: NextRequest) {
       console.log(JSON.stringify({ event: "order.dispute-opened", orderRef: paypalOrderId, ok: r.ok, revoked: r.revoked, via: "paypal" }));
       await recordSecurityEvent({ kind: "payment_dispute", actor: "paypal", detail: { orderRef: paypalOrderId, revokedGrants: r.revoked } });
     }
+    if (event.id) processed.add(event.id);
     return NextResponse.json({ received: true });
   }
 
   console.log(JSON.stringify({ event: "paypal.webhook.received", type, id: event.id ?? null, verified: true }));
+  if (event.id) processed.add(event.id);
   return NextResponse.json({ received: true, verified: true });
 }
