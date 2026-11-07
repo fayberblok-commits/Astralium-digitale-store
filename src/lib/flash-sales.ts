@@ -25,7 +25,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { getDb } from "./db.ts";
-import { getProductById, type Product } from "../data/products.ts";
+import type { Product } from "../data/products.ts";
+import { listAdminProducts } from "./catalog.ts";
 import { round2 } from "./byo.ts";
 
 export interface FlashSaleRecord {
@@ -162,8 +163,17 @@ export interface FlashSaleInput {
   active?: boolean;
 }
 
-export function sanitizeFlashSaleInput(input: FlashSaleInput): FlashSaleRecord | null {
-  const productIds = [...new Set((input.productIds ?? []).filter((id) => getProductById(id)))];
+/**
+ * Validate campaign input. Product ids survive only when the `known`
+ * resolver (built from the owner's live catalog by saveFlashSale)
+ * recognizes them — there is deliberately no default list, so omitting
+ * the resolver rejects every id (fail-closed, register item 82 fix).
+ */
+export function sanitizeFlashSaleInput(
+  input: FlashSaleInput,
+  known: (id: string) => boolean = () => false,
+): FlashSaleRecord | null {
+  const productIds = [...new Set((input.productIds ?? []).filter((id) => known(id)))];
   const startsAt = new Date(input.startsAt);
   const endsAt = new Date(input.endsAt);
   if (productIds.length === 0 || Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) return null;
@@ -185,7 +195,9 @@ export function sanitizeFlashSaleInput(input: FlashSaleInput): FlashSaleRecord |
 }
 
 export async function saveFlashSale(input: FlashSaleInput): Promise<{ ok: boolean; sale?: FlashSaleRecord; persisted?: "db" | "file"; error?: string }> {
-  const clean = sanitizeFlashSaleInput(input);
+  const { products } = await listAdminProducts();
+  const knownIds = new Set(products.map((p) => p.id));
+  const clean = sanitizeFlashSaleInput(input, (id) => knownIds.has(id));
   if (!clean) return { ok: false, error: "INVALID_CAMPAIGN" };
   const db = await getDb().catch(() => null);
   if (db) {
