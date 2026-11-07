@@ -179,10 +179,11 @@ export function buildSignedHeaders(
   method: string,
   key: string,
   now: Date = new Date(),
+  payloadHashOverride?: string,
 ): { url: string; headers: Record<string, string> } {
   const { amzDate, dateStamp } = amzDates(now);
   const { host, path, protocol } = resolveTarget(cfg, key);
-  const payloadHash = sha256Hex("");
+  const payloadHash = payloadHashOverride ?? sha256Hex("");
   const headers: Record<string, string> = {
     host,
     "x-amz-content-sha256": payloadHash,
@@ -266,6 +267,34 @@ export async function deleteObject(key: string, fetchImpl: typeof fetch = fetch)
   try {
     const res = await fetchImpl(url, { method: "DELETE", headers });
     return res.status === 204 || res.status === 200 || res.status === 404;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Upload an object's bytes server-side (signed PUT carrying the REAL
+ * payload hash). Used by the admin upload route: the browser sends the
+ * file to this app, and the app — never the browser — talks to S3, so no
+ * bucket CORS configuration is involved at all.
+ */
+export async function putObject(
+  key: string,
+  bytes: Uint8Array,
+  contentType?: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  const cfg = getStorageConfig();
+  if (!cfg) return false;
+  const payloadHash = createHash("sha256").update(bytes).digest("hex");
+  const { url, headers } = buildSignedHeaders(cfg, "PUT", key, new Date(), payloadHash);
+  try {
+    const res = await fetchImpl(url, {
+      method: "PUT",
+      headers: { ...headers, ...(contentType ? { "Content-Type": contentType } : {}) },
+      body: bytes as unknown as BodyInit,
+    });
+    return res.ok;
   } catch {
     return false;
   }
