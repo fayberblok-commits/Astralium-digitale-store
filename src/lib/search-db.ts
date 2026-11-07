@@ -11,10 +11,14 @@
  * the in-memory fuzzy search — search never hard-fails.
  */
 import { getDb } from "./db.ts";
-import { getProductById, type Product } from "../data/products.ts";
+import type { Product } from "../data/products.ts";
 
 export async function searchProductsDb(query: string, limit = 48, pool?: Product[]): Promise<Product[] | null> {
   if (!query.trim()) return null;
+  // Rehydration happens ONLY from the caller's catalog pool (register
+  // item 82 fix): without a pool there is nothing safe to render, so the
+  // caller falls back to the in-memory search over its own pool.
+  if (!pool) return null;
   try {
     const db = await getDb();
     if (!db) return null;
@@ -28,9 +32,9 @@ export async function searchProductsDb(query: string, limit = 48, pool?: Product
       limit,
     );
     if (!rows || rows.length === 0) return null;
-    const byId = pool ? new Map(pool.map((p) => [p.id, p])) : null;
+    const byId = new Map(pool.map((p) => [p.id, p]));
     const products = rows
-      .map((r) => (byId ? byId.get(r.id) : getProductById(r.id)))
+      .map((r) => byId.get(r.id))
       .filter((p): p is Product => Boolean(p));
     return products.length > 0 ? products : null;
   } catch {
