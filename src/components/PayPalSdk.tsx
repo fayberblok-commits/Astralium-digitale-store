@@ -1,5 +1,11 @@
 "use client";
 import { useEffect, useId, useRef, useState } from "react";
+import {
+  loadPaypalSdk,
+  readCachedClientToken,
+  type PaypalButtonsInstance,
+  type PaypalCardFieldsInstance,
+} from "../lib/paypal-sdk";
 
 /**
  * On-page PayPal checkout (owner fix, 2026-11): Smart Buttons AND
@@ -23,65 +29,30 @@ import { useEffect, useId, useRef, useState } from "react";
  *
  * The SDK is loaded with the store's PUBLIC PayPal client id,
  * rendered into the page by the server — never hard-coded here.
+ *
+ * Speed (register item 81, 2026-11): the payment area used to sit
+ * dead for ~5 s on slow connections — the SDK download only started
+ * after hydration, then the Buttons iframe painted, THEN the four
+ * card-field iframes rendered one await at a time into host nodes
+ * that React had not necessarily mounted yet. Now: the checkout
+ * page server-renders the SDK <script> (the loader in
+ * lib/paypal-sdk adopts it), Buttons and Card Fields render in
+ * PARALLEL, the four fields paint via Promise.all into mounted
+ * nodes, and both areas show a branded gold "preparing secure
+ * payment" state from the first paint — never dead grey boxes.
  */
 
-interface PaypalButtonsInstance {
-  render: (selector: string | HTMLElement) => Promise<void>;
-  close: () => void;
-}
-interface PaypalCardFieldComponent {
-  render: (selector: string | HTMLElement) => Promise<void>;
-}
-interface PaypalCardFieldsInstance {
-  isEligible: () => boolean;
-  NameField: (opts?: { placeholder?: string }) => PaypalCardFieldComponent;
-  NumberField: (opts?: { placeholder?: string }) => PaypalCardFieldComponent;
-  ExpiryField: (opts?: { placeholder?: string }) => PaypalCardFieldComponent;
-  CVVField: (opts?: { placeholder?: string }) => PaypalCardFieldComponent;
-  submit: () => Promise<void>;
-}
-interface PaypalNamespace {
-  Buttons: (config: Record<string, unknown>) => PaypalButtonsInstance;
-  CardFields?: (config: Record<string, unknown>) => PaypalCardFieldsInstance;
-}
-declare global {
-  interface Window {
-    paypal?: PaypalNamespace;
-  }
-}
-
-const sdkLoads = new Map<string, Promise<PaypalNamespace>>();
-
-function loadPaypalSdk(clientId: string, clientToken?: string | null): Promise<PaypalNamespace> {
-  // Card Fields need the server-minted client token ON the script tag
-  // (data-client-token); without it paypal.CardFields stays undefined.
-  // The token is part of the cache key so a tokenised load never
-  // reuses a token-less one (or vice versa).
-  const cacheKey = clientToken ? `${clientId}#${clientToken}` : clientId;
-  const existing = sdkLoads.get(cacheKey);
-  if (existing) return existing;
-  const promise = new Promise<PaypalNamespace>((resolve, reject) => {
-    if (window.paypal?.Buttons) {
-      resolve(window.paypal);
-      return;
+/** Resolve after React has committed pending state to the DOM (two
+ *  animation frames), so PayPal paints its iframes into host nodes
+ *  that actually exist. */
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    } else {
+      setTimeout(resolve, 50);
     }
-    const script = document.createElement("script");
-    script.src =
-      `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}` +
-      `&components=buttons,card-fields&currency=USD&intent=capture`;
-    if (clientToken) script.setAttribute("data-client-token", clientToken);
-    script.async = true;
-    script.onload = () => {
-      if (window.paypal?.Buttons) resolve(window.paypal);
-      else reject(new Error("paypal-sdk-incomplete"));
-    };
-    script.onerror = () => reject(new Error("paypal-sdk-load-failed"));
-    document.head.appendChild(script);
   });
-  // A failed load must not poison later attempts (e.g. transient network).
-  promise.catch(() => sdkLoads.delete(cacheKey));
-  sdkLoads.set(cacheKey, promise);
-  return promise;
 }
 
 export interface PayPalSdkLabels {
@@ -90,7 +61,11 @@ export interface PayPalSdkLabels {
   payByCard: string;
   processing: string;
   error: string;
+  /** Branded loading state shown while the payment area prepares. */
+  preparing: string;
 }
+
+type CardPhase = "idle" | "checking" | "ready" | "hidden";
 
 export default function PayPalSdk({
   clientId,
@@ -117,7 +92,8 @@ export default function PayPalSdk({
   const expiryId = `pp-expiry-${uid}`;
   const cvvId = `pp-cvv-${uid}`;
   const [failed, setFailed] = useState(false);
-  const [cardEligible, setCardEligible] = useState(false);
+  const [buttonsReady, setButtonsReady] = useState(false);
+  const [cardPhase, setCardPhase] = useState<CardPhase>("idle");
   const [cardBusy, setCardBusy] = useState(false);
   const cardFieldsRef = useRef<PaypalCardFieldsInstance | null>(null);
 
@@ -133,7 +109,12 @@ export default function PayPalSdk({
   useEffect(() => {
     let cancelled = false;
     let buttons: PaypalButtonsInstance | null = null;
-    loadPaypalSdk(clientId, clientToken)
+    // The page's server-minted token is authoritative; a token an
+    // intent warm-up cached in this session is the fallback when the
+    // server mint failed (today that case degrades to Buttons only —
+    // a cached genuine token can only improve it).
+    const token = clientToken ?? readCachedClientToken();
+    loadPaypalSdk(clientId, token)
       .then(async (paypal) => {
         if (cancelled) return;
         const shared = {
@@ -145,30 +126,59 @@ export default function PayPalSdk({
           onError: () => callbacks.current.onError(errorLabel),
           onCancel: () => { /* buyer closed the flow — nothing to report */ },
         };
-        buttons = paypal.Buttons({
-          ...shared,
-          style: { layout: "vertical", color: "gold", shape: "pill", label: "paypal" },
+        // Buttons and Card Fields are independent widgets: paint
+        // them in PARALLEL instead of gating the card fields behind
+        // the (slow) Buttons iframe render.
+        const renderButtons = (async () => {
+          const instance = paypal.Buttons({
+            ...shared,
+            style: { layout: "vertical", color: "gold", shape: "pill", label: "paypal" },
+          });
+          buttons = instance;
+          await instance.render(`#${buttonsId}`);
+          if (!cancelled) setButtonsReady(true);
+        })().catch(() => {
+          // Buttons failing is the component-level failure it has
+          // always been: hide the SDK area, the redirect button
+          // below remains the payment path.
+          if (!cancelled) setFailed(true);
         });
-        await buttons.render(`#${buttonsId}`);
-        if (cancelled) return;
-        // Hosted Card Fields: rendered ONLY when PayPal reports this
-        // merchant/buyer eligible. Any doubt → section stays hidden.
-        if (paypal.CardFields) {
+        const renderCard = (async () => {
+          // Hosted Card Fields: rendered ONLY when PayPal reports
+          // this merchant/buyer eligible. Any doubt → section hides.
+          if (!paypal.CardFields) {
+            if (!cancelled) setCardPhase("hidden");
+            return;
+          }
           try {
             const cardFields = paypal.CardFields({ ...shared });
-            if (cardFields.isEligible()) {
-              cardFieldsRef.current = cardFields;
-              setCardEligible(true);
-              await cardFields.NameField({ placeholder: "" }).render(`#${nameId}`);
-              await cardFields.NumberField({ placeholder: "1234 1234 1234 1234" }).render(`#${numberId}`);
-              await cardFields.ExpiryField({ placeholder: "MM/YY" }).render(`#${expiryId}`);
-              await cardFields.CVVField({ placeholder: "CVC" }).render(`#${cvvId}`);
+            if (!cardFields.isEligible()) {
+              if (!cancelled) setCardPhase("hidden");
+              return;
             }
+            cardFieldsRef.current = cardFields;
+            // Mount the card section (with a branded veil over it)
+            // and wait until its host nodes are really in the DOM —
+            // only then ask PayPal to paint the four field iframes,
+            // all at once.
+            setCardPhase("checking");
+            await nextPaint();
+            if (cancelled) return;
+            await Promise.all([
+              cardFields.NameField({ placeholder: "" }).render(`#${nameId}`),
+              cardFields.NumberField({ placeholder: "1234 1234 1234 1234" }).render(`#${numberId}`),
+              cardFields.ExpiryField({ placeholder: "MM/YY" }).render(`#${expiryId}`),
+              cardFields.CVVField({ placeholder: "CVC" }).render(`#${cvvId}`),
+            ]);
+            if (!cancelled) setCardPhase("ready");
           } catch {
-            setCardEligible(false);
-            cardFieldsRef.current = null;
+            if (!cancelled) {
+              setCardPhase("hidden");
+              cardFieldsRef.current = null;
+            }
           }
-        }
+        })();
+        await Promise.allSettled([renderButtons, renderCard]);
       })
       .catch(() => {
         if (!cancelled) setFailed(true);
@@ -187,7 +197,7 @@ export default function PayPalSdk({
 
   const submitCard = async () => {
     const cardFields = cardFieldsRef.current;
-    if (!cardFields || cardBusy) return;
+    if (!cardFields || cardBusy || cardPhase !== "ready") return;
     setCardBusy(true);
     try {
       // submit() runs createOrder → card confirmation → onApprove.
@@ -199,10 +209,20 @@ export default function PayPalSdk({
     }
   };
 
+  const cardShown = cardPhase === "checking" || cardPhase === "ready";
+
   return (
     <div className="paypal-sdk">
-      <div id={buttonsId} className="paypal-sdk-buttons" />
-      {cardEligible && (
+      <div className="paypal-sdk-stage">
+        <div id={buttonsId} className="paypal-sdk-buttons" />
+        {!buttonsReady && (
+          <div className="paypal-sdk-loading" role="status" aria-live="polite">
+            <span className="paypal-sdk-loading-gem" aria-hidden="true">✦</span>
+            <span>{labels.preparing}</span>
+          </div>
+        )}
+      </div>
+      {cardShown && (
         <div className="paypal-sdk-card">
           <p className="checkout-side-label">{labels.orCard}</p>
           <label className="card-field-label">
@@ -224,10 +244,16 @@ export default function PayPalSdk({
             type="button"
             className="btn btn-grad btn-lg pay-btn"
             onClick={() => void submitCard()}
-            disabled={cardBusy}
+            disabled={cardBusy || cardPhase !== "ready"}
           >
             {cardBusy ? labels.processing : labels.payByCard}
           </button>
+          {cardPhase === "checking" && (
+            <div className="paypal-sdk-card-veil" role="status" aria-live="polite">
+              <span className="paypal-sdk-loading-gem" aria-hidden="true">✦</span>
+              <span>{labels.preparing}</span>
+            </div>
+          )}
         </div>
       )}
     </div>
