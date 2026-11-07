@@ -974,10 +974,10 @@ html[data-motion="off"] .btn-grad { animation: none !important; }
 }
 
 /* ── the owner's animated thin lines ───────────────────────────────────
-   Spec (owner, 2026-11): on the homepage the thin lines change colour
-   every 5 seconds — green → red → yellow → orange → gold — a 25s loop
-   with a soft glow. Implemented as ONE keyframes track with hard
-   colour stops at each 20% boundary (5s at 25s), animating
+   Spec (owner, 2026-11, revised same month): the thin lines change
+   colour every 3 seconds — green → red → yellow → orange → gold — a
+   15s loop with a soft glow. Implemented as ONE keyframes track with
+   hard colour stops at each 20% boundary (3s at 15s), animating
    border-color + box-shadow glow + the ornament's color. Applied via
    .cycle-line to the masthead rule and the featured band's borders.
    Scoped to the astralium-noir palette (the approved design), frozen
@@ -994,7 +994,7 @@ html[data-motion="off"] .btn-grad { animation: none !important; }
   80%    { border-color: #efc65e; box-shadow: 0 0 14px rgba(239, 198, 94, 0.5); color: #efc65e; }
   100%   { border-color: #efc65e; box-shadow: 0 0 14px rgba(239, 198, 94, 0.5); color: #efc65e; }
 }
-html[data-palette="astralium-noir"] .cycle-line { animation: astralium-line-cycle 25s linear infinite; }
+html[data-palette="astralium-noir"] .cycle-line { animation: astralium-line-cycle 15s linear infinite; }
 html[data-motion="off"] .cycle-line { animation: none !important; }
 @media (prefers-reduced-motion: reduce) {
   .cycle-line { animation: none !important; }
@@ -1251,3 +1251,192 @@ html[data-palette="astralium-noir"][data-theme="dark"] .card {
   border-color: rgba(124, 77, 255, 0.28);
 }
 html[data-palette="astralium-noir"][data-theme="dark"] .card:hover { border-color: var(--line-gold); }
+
+/* ══ 2026-11 design build: the two approved architectures ════════════
+   (1) The WIDE BIG PAGE (homepage): LED page frame + side strips, hero
+   art in a cycling LED frame, the moving-words band, LED-framed real
+   covers, and the emerald payment band. (2) DESIGN G — the Royal Long
+   Gallery (shop): cinematic cover hero, real inside-pages band,
+   all-books rows with LED edge bars, feature cards, numbered steps.
+   LED colour track = the owner's cycle (green → red → yellow →
+   orange → gold), 3 seconds per colour, 15s loop — the same stops as
+   astralium-line-cycle, plus a background-color twin for solid bars. */
+@keyframes astralium-bg-cycle {
+  0%, 19.9%   { background-color: #22c55e; box-shadow: 0 0 14px rgba(34, 197, 94, 0.55); }
+  20%, 39.9%  { background-color: #ef4444; box-shadow: 0 0 14px rgba(239, 68, 68, 0.55); }
+  40%, 59.9%  { background-color: #facc15; box-shadow: 0 0 14px rgba(250, 204, 21, 0.55); }
+  60%, 79.9%  { background-color: #f97316; box-shadow: 0 0 14px rgba(249, 115, 22, 0.55); }
+  80%, 100%   { background-color: #efc65e; box-shadow: 0 0 14px rgba(239, 198, 94, 0.6); }
+}
+
+/* ── LED page frame + side strips (fixed, decorative, never blocks) ── */
+.led-page-frame {
+  position: fixed; inset: 8px; z-index: 30; pointer-events: none;
+  border: 2px solid var(--gold);
+}
+html[data-palette="astralium-noir"] .led-page-frame { animation: astralium-line-cycle 15s linear infinite; }
+.led-strip {
+  position: fixed; top: 0; bottom: 0; width: 3px; z-index: 30; pointer-events: none;
+  background-color: #22c55e; animation: astralium-bg-cycle 15s linear infinite;
+}
+.led-strip-l { left: 0; }
+.led-strip-r { right: 0; }
+@media (max-width: 640px) {
+  .led-page-frame { inset: 4px; }
+  .led-strip { width: 2px; }
+}
+html[data-motion="off"] .led-page-frame,
+html[data-motion="off"] .led-strip { animation: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .led-page-frame, .led-strip { animation: none !important; }
+}
+
+/* ── real book covers (printed artwork shipped as data-URI assets) ─── */
+.cover-img { padding: 0; background: #0b0b10; }
+.cover-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cover-img.cover-md, .cover-img.cover-lg { aspect-ratio: 2 / 3; }
+/* thin LED line framing every real cover, cycling with the owner's track */
+.led-cover { border: 2px solid var(--gold); }
+html[data-palette="astralium-noir"] .led-cover { animation: astralium-line-cycle 15s linear infinite; }
+html[data-motion="off"] .led-cover { animation: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .led-cover { animation: none !important; }
+}
+
+/* ── button identities: BUY glows gold, PAY glows emerald ──────────── */
+html[data-palette="astralium-noir"] .btn-grad {
+  box-shadow: 0 0 26px -4px var(--glow), 0 12px 30px -10px var(--glow), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+.btn-pay {
+  position: relative; overflow: hidden; isolation: isolate;
+  background-image: linear-gradient(115deg, #34d399, #059669, #10b981, #047857, #34d399);
+  background-size: 280% 100%;
+  color: #04150d; border: 1px solid transparent; font-weight: 800;
+  box-shadow: 0 0 26px -4px rgba(16, 185, 129, 0.55), 0 12px 30px -10px rgba(16, 185, 129, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  animation: grad-slide 8s ease-in-out infinite alternate;
+}
+.btn-pay:hover {
+  color: #04150d; border-color: transparent;
+  box-shadow: 0 0 36px -2px rgba(16, 185, 129, 0.7), 0 16px 36px -10px rgba(16, 185, 129, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  animation-duration: 3.2s;
+}
+.btn-pay::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(115deg, transparent 32%, rgba(255, 255, 255, 0.38) 50%, transparent 68%);
+  transform: translateX(-130%);
+}
+.btn-pay:hover::after { transform: translateX(130%); transition: transform 0.9s ease; }
+.btn-pay:active { transform: scale(0.98); }
+html[data-motion="off"] .btn-pay { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .btn-pay { animation: none; }
+}
+
+/* ── the moving-words band (owner's signature, scrolls for real) ───── */
+.words-band {
+  overflow: hidden; margin-top: 28px; padding: 12px 0;
+  border-top: 2px solid var(--gold); border-bottom: 2px solid var(--gold);
+  background: rgba(0, 0, 0, 0.35);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+}
+.words-track { display: flex; width: max-content; direction: ltr; animation: marquee-scroll 26s linear infinite; }
+.words-band:hover .words-track { animation-play-state: paused; }
+.words-item {
+  display: inline-flex; align-items: center; gap: 30px; padding: 0 15px; white-space: nowrap;
+  font-family: var(--font-display); font-size: 1.14rem; letter-spacing: 0.02em; color: var(--gold-ink);
+}
+.words-dia { font-size: 0.78rem; }
+.words-dia-0 { color: #22c55e; }
+.words-dia-1 { color: #ef4444; }
+.words-dia-2 { color: #efc65e; }
+.words-dia-3 { color: #f97316; }
+html[data-motion="off"] .words-track { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .words-track { animation: none; }
+}
+
+/* ── homepage payment band (wide big page) ─────────────────────────── */
+.pay-band {
+  display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
+  margin-top: 20px; padding: 20px 28px;
+  border: 1.5px solid var(--line-gold); border-radius: 14px;
+  background: linear-gradient(160deg, var(--surface-strong), var(--bg-2));
+}
+.pay-band-total { display: flex; flex-direction: column; gap: 2px; }
+.pay-band-total small {
+  font-family: var(--font-label); letter-spacing: 0.22em; text-transform: uppercase;
+  font-size: 0.68rem; color: var(--muted);
+}
+.pay-band-total strong { font-family: var(--font-display); font-size: 1.7rem; color: var(--gold-ink); }
+.pay-band .btn-pay { flex: 1; min-width: 200px; }
+.pay-band-note { color: var(--muted); font-size: 0.9rem; max-width: 240px; }
+@media (max-width: 640px) {
+  .pay-band { flex-direction: column; text-align: center; padding: 20px; }
+  .pay-band .btn-pay { width: 100%; }
+  .pay-band-note { max-width: none; }
+}
+
+/* ── DESIGN G — the Royal Long Gallery (shop page) ─────────────────── */
+.gal-kicker {
+  display: flex; align-items: center; justify-content: center; gap: 16px;
+  color: var(--gold-ink); letter-spacing: 0.3em; text-transform: uppercase;
+  font-size: 0.78rem; font-weight: 700; margin: 34px auto 20px;
+}
+.gal-kicker::before, .gal-kicker::after { content: ""; height: 1px; width: 72px; background: var(--gold); flex: none; }
+.gal-hero { text-align: center; padding: 6px 8px 10px; }
+.gal-hero-cover {
+  width: min(400px, 82vw); margin: 0 auto;
+  filter: drop-shadow(0 26px 60px rgba(239, 198, 94, 0.20));
+}
+.gal-hero h2 { font-size: clamp(1.7rem, 4.5vw, 2.6rem); margin: 22px auto 4px; max-width: 760px; }
+.gal-hero-price { font-family: var(--font-display); font-size: 1.9rem; color: var(--gold-ink); margin: 4px 0 18px; }
+.gal-hero-btns { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+.gal-divider { height: 3px; margin: 44px auto 0; max-width: 100%; background-color: #22c55e; animation: astralium-bg-cycle 15s linear infinite; }
+html[data-motion="off"] .gal-divider { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .gal-divider { animation: none; }
+}
+.gal-inside-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+@media (max-width: 700px) { .gal-inside-grid { grid-template-columns: 1fr; } }
+.gal-inside-grid figure { margin: 0; border: 1.5px solid var(--gold); border-radius: 8px; overflow: hidden; background: #0b0b10; }
+.gal-inside-grid img { width: 100%; height: auto; display: block; }
+.gal-caption { text-align: center; color: var(--muted); margin-top: 16px; font-size: 1rem; }
+.gal-rows { display: flex; flex-direction: column; gap: 14px; }
+.gal-row {
+  position: relative; display: flex; align-items: center; gap: 18px;
+  border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  background: var(--surface-strong); padding: 14px 20px 14px 26px;
+}
+.gal-edge { position: absolute; inset-inline-start: 0; top: 0; bottom: 0; width: 4px; }
+.gal-row-thumb { width: 54px; flex: none; display: block; }
+.gal-row-thumb .cover { border-radius: 3px; }
+.gal-row-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.gal-row-title { font-family: var(--font-display); font-size: 1.16rem; text-decoration: none; }
+.gal-row-title:hover { color: var(--gold-ink); }
+.gal-row-price { font-family: var(--font-display); font-size: 1.05rem; color: var(--gold-ink); }
+@media (max-width: 560px) {
+  .gal-row { flex-wrap: wrap; padding: 14px 16px 14px 22px; }
+  .gal-row .btn { width: 100%; }
+}
+.gal-feats { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
+.gal-feat {
+  border: 1.5px solid var(--gold); border-radius: 12px; padding: 26px 20px;
+  background: var(--surface-strong); text-align: center;
+}
+.gal-feat:nth-child(1) { border-color: #22c55e; }
+.gal-feat:nth-child(2) { border-color: #ef4444; }
+.gal-feat:nth-child(3) { border-color: var(--gold); }
+.gal-feat-icon { font-size: 2.1rem; display: block; margin-bottom: 10px; }
+.gal-feat h3 { margin: 0 0 6px; font-size: 1.2rem; }
+.gal-feat p { color: var(--muted); margin: 0; font-size: 0.92rem; }
+.gal-step-num {
+  width: 54px; height: 54px; border-radius: 50%; margin: 0 auto 12px;
+  border: 2px solid var(--gold); color: var(--gold-ink);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display); font-size: 1.35rem;
+}
+.gal-steps .step:nth-child(1) .gal-step-num { border-color: #ef4444; color: #ef4444; }
+.gal-steps .step:nth-child(2) .gal-step-num { border-color: #efc65e; color: #efc65e; }
+.gal-steps .step:nth-child(3) .gal-step-num { border-color: #f97316; color: #f97316; }
+.gal-steps .step { text-align: center; }
