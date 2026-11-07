@@ -23,7 +23,7 @@
     "eslint": "9.39.5",
     "eslint-config-next": "15.5.28",
     "prisma": "6.19.3",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   },
   "name": "astralium-v2",
   "private": true,
