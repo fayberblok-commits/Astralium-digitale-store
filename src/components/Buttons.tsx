@@ -76,6 +76,7 @@ export function ExpressPayPalButton({
   return (
     <button
       type="button"
+      dir="ltr"
       className={`btn-paypal-brand ${big ? "btn-paypal-lg" : ""}`}
       onClick={() => {
         try {
