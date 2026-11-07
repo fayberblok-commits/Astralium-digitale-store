@@ -17,7 +17,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { getDb } from "./db.ts";
-import { PRODUCTS } from "../data/products.ts";
+import { getStorefrontProductById, getStorefrontProducts } from "./catalog.ts";
 import { encryptPii, decryptPii, hashSubject, piiConfigured } from "./pii.ts";
 import { sendEmail } from "../services/email.ts";
 
@@ -103,7 +103,9 @@ export async function registerAlert(input: {
   optIn: boolean;
 }): Promise<{ ok: boolean; error?: string; persisted?: "db" | "file" }> {
   if (input.optIn !== true) return { ok: false, error: "OPTIN_REQUIRED" };
-  const product = PRODUCTS.find((p) => p.id === input.productId);
+  // The alert's product + price snapshot come from the LIVE storefront
+  // catalog (register item 82 fix) — never from a static list.
+  const product = await getStorefrontProductById(input.productId);
   if (!product) return { ok: false, error: "PRODUCT_NOT_FOUND" };
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) return { ok: false, error: "INVALID_EMAIL" };
   if (!piiConfigured()) return { ok: false, error: "PII_NOT_CONFIGURED" };
@@ -150,18 +152,20 @@ async function updateSnapshotPrice(id: string, newPrice: number): Promise<void> 
   await writeStore(all.map((a) => (a.id === id ? { ...a, priceAtSave: newPrice } : a)));
 }
 
-/** Cron job body: compare snapshots vs catalog, email actual drops. */
+/** Cron job body: compare snapshots vs the live catalog, email actual drops. */
 export async function runPriceDropJob(): Promise<{ checked: number; drops: number; emailed: number }> {
   const alerts = await listAlerts();
-  const byId = new Map(alerts.map((a) => [a.id, a]));
-  const drops = findPriceDrops(alerts, (pid) => PRODUCTS.find((p) => p.id === pid)?.priceUSD);
+  const catalog = await getStorefrontProducts();
+  const byId = new Map(catalog.map((p) => [p.id, p]));
+  const alertsById = new Map(alerts.map((a) => [a.id, a]));
+  const drops = findPriceDrops(alerts, (pid) => byId.get(pid)?.priceUSD);
   let emailed = 0;
   for (const drop of drops) {
-    const alert = byId.get(drop.alertId);
+    const alert = alertsById.get(drop.alertId);
     if (!alert) continue;
     const email = decryptPii(alert.emailCipher);
     if (!email) continue;
-    const product = PRODUCTS.find((p) => p.id === drop.productId);
+    const product = byId.get(drop.productId);
     await sendEmail({
       to: email,
       kind: "price-alert",
