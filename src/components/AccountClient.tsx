@@ -1,16 +1,24 @@
 "use client";
 import Link from "next/link";
 import type { Dict } from "../i18n/dictionaries";
+import type { Product } from "../data/products";
 import { useStore } from "../lib/store";
-import { PRODUCTS, getProductBySlug } from "../data/products";
 import ProductCard from "./ProductCard";
 import LibrarySection from "./LibrarySection";
 import WishlistExtras from "./WishlistExtras";
 import ReferralPanel from "./ReferralPanel";
 
-export default function AccountClient({ locale, dict, currency }: { locale: string; dict: Dict; currency: string }) {
+/**
+ * Account page client. The product list arrives from the server page,
+ * resolved through the LIVE storefront catalog (register item 82 fix):
+ * wishlist cards and order-item titles resolve against it — a product
+ * that is not on sale renders nothing here, and an order line whose
+ * product no longer resolves falls back to the title stored with the
+ * order itself.
+ */
+export default function AccountClient({ locale, dict, currency, products }: { locale: string; dict: Dict; currency: string; products: Product[] }) {
   const { orders, wishlist } = useStore();
-  const wishedProducts = PRODUCTS.filter((p) => wishlist.includes(p.slug));
+  const wishedProducts = products.filter((p) => wishlist.includes(p.slug));
   return (
     <>
       <p className="muted">{dict.account_d}</p>
@@ -28,7 +36,7 @@ export default function AccountClient({ locale, dict, currency }: { locale: stri
               <ul className="includes">
                 {o.items.flatMap((item) =>
                   (item.productIds ?? [item.id]).map((pid) => {
-                    const product = PRODUCTS.find((p) => p.id === pid);
+                    const product = products.find((p) => p.id === pid);
                     return (
                       <li key={`${o.orderId}-${pid}`}>
                         {product ? product.title : item.title}
@@ -60,10 +68,10 @@ export default function AccountClient({ locale, dict, currency }: { locale: stri
           <>
             <div className="grid">
               {wishedProducts.map((p) => (
-                <ProductCard key={p.id} product={getProductBySlug(p.slug)!} locale={locale} dict={dict} currency={currency} />
+                <ProductCard key={p.id} product={p} locale={locale} dict={dict} currency={currency} />
               ))}
             </div>
-            <WishlistExtras locale={locale} dict={dict} wishlistSlugs={wishlist} />
+            <WishlistExtras locale={locale} dict={dict} wishlistSlugs={wishlist} products={products} />
           </>
         )}
       </section>
