@@ -7,8 +7,15 @@
  * inventing prices, features or policies, and requires handing off to a
  * human when unsure. It never sees other customers' data — order lookups
  * require the caller to pass an email-verified order summary (future phase).
+ *
+ * Catalog discipline (register item 82 fix): product answers come from
+ * the LIVE storefront catalog, resolved per request. The pure helpers
+ * take the catalog explicitly and default to EMPTY (fail-closed) — the
+ * static seed list is never searched, so the assistant cannot quote a
+ * deactivated demo product or a made-up rating again.
  */
-import { PRODUCTS, FAQS, type Product } from "../data/products.ts";
+import { FAQS, type Product } from "../data/products.ts";
+import { getStorefrontProducts } from "../lib/catalog.ts";
 
 export interface SupportAnswer {
   answer: string;
@@ -26,10 +33,10 @@ const POLICY_TOPICS: { match: RegExp; faqIndex: number }[] = [
   { match: /commercial|license|ترخيص|تجاري/i, faqIndex: 5 },
 ];
 
-export function searchCatalog(query: string, limit = 3): Product[] {
+export function searchCatalog(query: string, limit = 3, catalog: Product[] = []): Product[] {
   const q = query.toLowerCase();
   const words = q.split(/[^a-z0-9\u0600-\u06FF]+/i).filter((w) => w.length > 2);
-  const scored = PRODUCTS.map((p) => {
+  const scored = catalog.map((p) => {
     const hay = `${p.title} ${p.subtitle} ${p.description} ${p.category}`.toLowerCase();
     let score = 0;
     for (const w of words) if (hay.includes(w)) score += 1;
@@ -40,13 +47,13 @@ export function searchCatalog(query: string, limit = 3): Product[] {
   return scored.slice(0, limit).map((s) => s.p);
 }
 
-export function answerFromData(question: string): SupportAnswer {
+export function answerFromData(question: string, catalog: Product[] = []): SupportAnswer {
   const policy = POLICY_TOPICS.find((t) => t.match.test(question));
   if (policy) {
     const faq = FAQS[policy.faqIndex];
     return { answer: faq.a, sources: [`faq:${policy.faqIndex}`], handoff: false, model: "local-data" };
   }
-  const found = searchCatalog(question);
+  const found = searchCatalog(question, 3, catalog);
   if (found.length > 0) {
     const lines = found.map(
       (p) => `• ${p.title} — $${p.priceUSD} (${p.category}, ★ ${p.rating}). ${p.subtitle}.`,
@@ -68,13 +75,14 @@ export function answerFromData(question: string): SupportAnswer {
 }
 
 export async function answerSupport(question: string): Promise<SupportAnswer> {
-  const grounded = answerFromData(question);
+  const catalog = await getStorefrontProducts().catch(() => [] as Product[]);
+  const grounded = answerFromData(question, catalog);
   const key = process.env.OPENAI_API_KEY;
   if (!key || grounded.handoff) return grounded;
   try {
     const context = [
       ...grounded.sources
-        .map((s) => PRODUCTS.find((p) => p.slug === s))
+        .map((s) => catalog.find((p) => p.slug === s))
         .filter(Boolean)
         .map((p) => `PRODUCT ${p!.slug}: ${p!.title} — $${p!.priceUSD}. ${p!.description}`),
       ...FAQS.map((f, i) => `POLICY ${i}: ${f.q} — ${f.a}`),
