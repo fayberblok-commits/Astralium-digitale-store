@@ -38,7 +38,7 @@ export default async function SharedWishlistPage({
           {products.map((p) => (
             <article key={p.id} className="card">
               <Link href={`/${locale}/product/${p.slug}`}>
-                <Cover title={p.title} category={p.category} hue={p.hue} />
+                <Cover title={p.title} category={p.category} hue={p.hue} id={p.id} />
               </Link>
               <div className="card-body">
                 <Link href={`/${locale}/product/${p.slug}`} className="card-title">{p.title}</Link>
