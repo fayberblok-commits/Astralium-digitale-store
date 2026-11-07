@@ -33,7 +33,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { getDb } from "./db.ts";
-import { createDownloadToken } from "./tokens.ts";
+import { signDownloadTokenPayload } from "./tokens.ts";
 import { getProductById } from "../data/products.ts";
 
 export type OrderStatus = "pending" | "paid" | "fulfilled" | "refunded" | "failed" | "disputed";
@@ -379,9 +379,65 @@ export async function listGrantsForOrder(orderId: string): Promise<GrantRecord[]
 }
 
 /**
- * Create grants for an order's items (idempotent per product: existing
- * grants are returned WITHOUT their token — plaintext exists only at
- * first issuance; re-delivery mints fresh tokens via reissueGrant).
+ * Grant tokens are deterministic (delivery-audit fix, findings 71/74):
+ * the nonce is derived from the grant's own stored fields, so the
+ * exact token issued at fulfilment can be re-derived from its grant
+ * row by grantTokenFor. The token stays unforgeable — the HMAC
+ * signature over the payload is what protects it; the nonce only
+ * needs to be stable, never secret.
+ */
+function grantNonce(orderId: string, productId: string, expiresAt: string): string {
+  return sha256Hex(`astralium-grant:${orderId}:${productId}:${expiresAt}`).slice(0, 12);
+}
+
+/**
+ * Re-derive the download token for a stored grant. Returns null when
+ * the grant predates deterministic issuance (its nonce was random and
+ * the plaintext exists only in the original delivery email) — callers
+ * must then omit the link rather than mint an ungoverned token.
+ */
+export function grantTokenFor(grant: GrantRecord): string | null {
+  const exp = Math.floor(new Date(grant.expiresAt).getTime() / 1000);
+  if (!Number.isFinite(exp)) return null;
+  let token: string;
+  try {
+    token = signDownloadTokenPayload({
+      pid: grant.productId,
+      oid: grant.orderId,
+      exp,
+      max: grant.maxDownloads,
+      n: grantNonce(grant.orderId, grant.productId, grant.expiresAt),
+    });
+  } catch {
+    return null;
+  }
+  return sha256Hex(token) === grant.tokenHash ? token : null;
+}
+
+/**
+ * Re-delivery tokens for an order (success page, library, fulfilment
+ * emails): ensures grants exist — issuing or renewing as needed —
+ * and returns productId → grant token for every live grant. Every
+ * token handed out here is grant-backed: counted, capped and
+ * revocable on refund/dispute.
+ */
+export async function grantTokensForOrder(order: OrderRecord): Promise<Map<string, string>> {
+  await issueGrantsForOrder(order);
+  const grants = await listGrantsForOrder(order.id);
+  const tokens = new Map<string, string>();
+  for (const grant of grants) {
+    if (grant.revokedAt) continue;
+    const token = grantTokenFor(grant);
+    if (token) tokens.set(grant.productId, token);
+  }
+  return tokens;
+}
+
+/**
+ * Create grants for an order's items (idempotent per product: an
+ * existing live grant is kept and its token re-derived via
+ * grantTokenFor; an expired grant is revoked and renewed so a buyer
+ * returning after the 7-day window is never locked out).
  */
 export async function issueGrantsForOrder(
   order: OrderRecord,
@@ -391,19 +447,50 @@ export async function issueGrantsForOrder(
   const issued: IssuedGrant[] = [];
   const db = await getDb().catch(() => null);
   const store = db ? null : await readFileStore();
+  // Renewal (finding 74): an expired-but-unrevoked grant would block
+  // re-issuance forever through the skip rule below while its token
+  // is already dead. Revoke expired grants first so fresh ones issue.
+  const nowMs = Date.now();
+  const expiredIds = new Set(
+    prior.filter((g) => !g.revokedAt && new Date(g.expiresAt).getTime() <= nowMs).map((g) => g.id),
+  );
+  if (expiredIds.size > 0) {
+    const revokedAt = new Date(nowMs).toISOString();
+    if (db) {
+      try {
+        await db.downloadGrant.updateMany({
+          where: { id: { in: [...expiredIds] }, revokedAt: null },
+          data: { revokedAt: new Date(revokedAt) },
+        });
+      } catch { /* fall through — the fresh grants below still issue */ }
+    }
+    if (store) {
+      for (const g of store.grants) {
+        if (expiredIds.has(g.id) && !g.revokedAt) g.revokedAt = revokedAt;
+      }
+    }
+    for (const g of prior) if (expiredIds.has(g.id)) g.revokedAt = revokedAt;
+  }
   for (const item of order.items) {
     if (prior.some((g) => g.productId === item.productId && !g.revokedAt)) continue;
-    const token = createDownloadToken(item.productId, order.id, {
-      ttlSeconds: opts.ttlSeconds, maxDownloads: opts.maxDownloads,
+    const maxDownloads = opts.maxDownloads ?? 5;
+    const exp = Math.floor(Date.now() / 1000) + (opts.ttlSeconds ?? 7 * 24 * 3600);
+    const expiresAt = new Date(exp * 1000).toISOString();
+    const token = signDownloadTokenPayload({
+      pid: item.productId,
+      oid: order.id,
+      exp,
+      max: maxDownloads,
+      n: grantNonce(order.id, item.productId, expiresAt),
     });
     const grant: GrantRecord = {
       id: randomUUID(),
       orderId: order.id,
       productId: item.productId,
       tokenHash: sha256Hex(token),
-      maxDownloads: opts.maxDownloads ?? 5,
+      maxDownloads,
       downloadsCount: 0,
-      expiresAt: new Date(Date.now() + (opts.ttlSeconds ?? 7 * 24 * 3600) * 1000).toISOString(),
+      expiresAt,
       revokedAt: null,
       createdAt: new Date().toISOString(),
     };
