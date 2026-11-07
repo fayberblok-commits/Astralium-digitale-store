@@ -40,7 +40,7 @@ export default async function SuccessPage({
       ? await verifyPaypalOrder(paypalRef)
       : null;
   const providerRef = sp.session_id ?? paypalRef;
-  const links = verified ? downloadLinksFor(verified) : [];
+  const links = verified ? await downloadLinksFor(verified) : [];
 
   // Phase 2: social delivery options for verified orders — a one-time
   // claim code plus deep links for the channels that are flag-on AND
