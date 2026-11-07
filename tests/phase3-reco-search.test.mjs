@@ -14,7 +14,7 @@ test("co-purchase scoring: most-bought-together ranks first with also_bought rea
   const counts = coPurchaseCounts(baskets, "p01");
   assert.equal(counts.get("p02"), 3);
   assert.equal(counts.get("p03"), 1);
-  const recs = scoreRecommendations({ baskets, targetId: "p01" });
+  const recs = scoreRecommendations({ baskets, targetId: "p01", catalog: PRODUCTS });
   assert.equal(recs[0].productId, "p02");
   assert.equal(recs[0].reason, "also_bought");
   assert.equal(recs[0].coCount, 3);
@@ -24,7 +24,7 @@ test("co-purchase scoring: most-bought-together ranks first with also_bought rea
 });
 
 test("fallback with no order data: affinity + top-rated reasons only, target category leads", () => {
-  const recs = scoreRecommendations({ baskets: [], targetId: "p01" });
+  const recs = scoreRecommendations({ baskets: [], targetId: "p01", catalog: PRODUCTS });
   assert.ok(recs.length > 0);
   assert.ok(recs.every((r) => r.reason === "similar_category" || r.reason === "top_rated"));
   // p01 is an ebook; other ebooks are category-affinity and must outrank fill.
@@ -33,7 +33,7 @@ test("fallback with no order data: affinity + top-rated reasons only, target cat
 });
 
 test("viewed history (slugs) drives similar_category without any identity data", () => {
-  const recs = scoreRecommendations({ baskets: [], viewedIds: ["midnight-lofi-collection"] });
+  const recs = scoreRecommendations({ baskets: [], viewedIds: ["midnight-lofi-collection"], catalog: PRODUCTS });
   const piano = recs.find((r) => r.productId === "p10"); // also music
   assert.ok(piano);
   assert.equal(piano.reason, "similar_category");
@@ -50,33 +50,33 @@ test("aggregator input carries ids only — basketsFromOrders strips everything 
 });
 
 test("smart search tolerates typos: 'blueprnt' finds The AI Profit Blueprint first", () => {
-  const hits = searchProducts("blueprnt");
+  const hits = searchProducts("blueprnt", { catalog: PRODUCTS });
   assert.ok(hits.length >= 1);
   assert.equal(hits[0].product.id, "p01");
-  const exact = searchProducts("blueprint");
+  const exact = searchProducts("blueprint", { catalog: PRODUCTS });
   assert.equal(exact[0].product.id, "p01");
 });
 
 test("search ranking: title matches outrank description-only matches", () => {
-  const hits = searchProducts("python");
+  const hits = searchProducts("python", { catalog: PRODUCTS });
   assert.ok(hits.length >= 1);
   assert.equal(hits[0].product.id, "p12"); // "Data Analysis with Python" — title hit
 });
 
 test("search filters are wired to data: language, category, rating", () => {
-  const fr = searchProducts("", { filters: { language: "fr" } });
+  const fr = searchProducts("", { filters: { language: "fr" }, catalog: PRODUCTS });
   assert.deepEqual(fr.map((h) => h.product.id), ["p08"]);
-  const ebooks = searchProducts("", { filters: { category: "ebooks" } });
+  const ebooks = searchProducts("", { filters: { category: "ebooks" }, catalog: PRODUCTS });
   assert.ok(ebooks.length >= 2 && ebooks.every((h) => h.product.category === "ebooks"));
-  const top = searchProducts("", { filters: { minRating: 4.9 } });
+  const top = searchProducts("", { filters: { minRating: 4.9 }, catalog: PRODUCTS });
   assert.ok(top.every((h) => h.product.rating >= 4.9));
-  const cheap = searchProducts("", { filters: { maxPriceUSD: 20 } });
+  const cheap = searchProducts("", { filters: { maxPriceUSD: 20 }, catalog: PRODUCTS });
   assert.ok(cheap.length >= 1 && cheap.every((h) => h.product.priceUSD <= 20));
   assert.equal(PRODUCTS.length, 12);
 });
 
 test("suggestions return title-led matches for the dropdown", () => {
-  const sug = suggestProducts("bluepr");
+  const sug = suggestProducts("bluepr", 6, PRODUCTS);
   assert.ok(sug.some((p) => p.id === "p01"));
-  assert.deepEqual(suggestProducts("zzzzzz"), []);
+  assert.deepEqual(suggestProducts("zzzzzz", 6, PRODUCTS), []);
 });
