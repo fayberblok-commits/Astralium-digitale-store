@@ -72,12 +72,16 @@ export interface PaypalOrderBodyInput {
  * pinned by tests.
  */
 export function buildPaypalOrderBody(input: PaypalOrderBodyInput) {
+  // PayPal caps custom_id at 127 chars: an oversized join makes order
+  // creation fail outright. Normal carts are far below the cap; past
+  // it, the order id alone travels (the ledger holds the items).
+  const joinedIds = input.productIds.join(",");
   return {
     intent: "CAPTURE" as const,
     purchase_units: [
       {
         reference_id: input.orderId,
-        custom_id: input.productIds.join(","),
+        custom_id: joinedIds.length <= 127 ? joinedIds : input.orderId,
         amount: { currency_code: "USD", value: input.totalUSD.toFixed(2) },
         description: "Astralium Digitale Store order",
       },
@@ -119,6 +123,49 @@ export interface PaypalCaptureResult {
   payerEmail: string | null;
 }
 
+export interface PaypalOrderDetails {
+  status: string | null;
+  referenceId: string | null;
+  customId: string | null;
+  amountUSD: number | null;
+  payerEmail: string | null;
+  captures: { id: string; status: string }[];
+}
+
+/** Read an order back from PayPal (Orders v2 GET). Null on any failure. */
+export async function getPaypalOrder(token: string, providerOrderId: string): Promise<PaypalOrderDetails | null> {
+  try {
+    const res = await fetch(`${paypalBase()}/v2/checkout/orders/${encodeURIComponent(providerOrderId)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json().catch(() => ({}))) as {
+      status?: string;
+      payer?: { email_address?: string };
+      purchase_units?: {
+        reference_id?: string;
+        custom_id?: string;
+        amount?: { value?: string };
+        payments?: { captures?: { id?: string; status?: string }[] };
+      }[];
+    };
+    const unit = data.purchase_units?.[0];
+    const amount = unit?.amount?.value ? Number(unit.amount.value) : NaN;
+    return {
+      status: data.status ?? null,
+      referenceId: unit?.reference_id ?? null,
+      customId: unit?.custom_id ?? null,
+      amountUSD: Number.isFinite(amount) ? amount : null,
+      payerEmail: data.payer?.email_address ?? null,
+      captures: (unit?.payments?.captures ?? [])
+        .filter((c) => typeof c.id === "string")
+        .map((c) => ({ id: c.id as string, status: c.status ?? "" })),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function capturePaypalOrder(token: string, providerOrderId: string): Promise<PaypalCaptureResult> {
   try {
     const res = await fetch(`${paypalBase()}/v2/checkout/orders/${encodeURIComponent(providerOrderId)}/capture`, {
@@ -127,16 +174,45 @@ export async function capturePaypalOrder(token: string, providerOrderId: string)
     });
     const data = (await res.json().catch(() => ({}))) as {
       status?: string;
+      name?: string;
       payer?: { email_address?: string };
       purchase_units?: { payments?: { captures?: { id?: string; status?: string }[] } }[];
     };
     const capture = data.purchase_units?.[0]?.payments?.captures?.[0];
+    if (res.ok && capture?.status === "COMPLETED") {
+      return {
+        ok: true,
+        status: data.status ?? null,
+        captureId: capture?.id ?? null,
+        captureStatus: capture?.status ?? null,
+        payerEmail: data.payer?.email_address ?? null,
+      };
+    }
+    // Already captured (a retry after the first capture succeeded, or
+    // the webhook captured first): the capture call itself errors with
+    // ORDER_ALREADY_CAPTURED and carries no usable captures[] — read
+    // the order back and judge by its real captures. A PENDING capture
+    // (PayPal risk/eCheck review on new accounts) is reported as-is so
+    // callers can show the buyer the honest "under review" state
+    // instead of a permanent generic failure.
+    const details = await getPaypalOrder(token, providerOrderId);
+    const done = details?.captures.find((c) => c.status === "COMPLETED");
+    if (done) {
+      return {
+        ok: true,
+        status: details?.status ?? data.status ?? null,
+        captureId: done.id,
+        captureStatus: done.status,
+        payerEmail: details?.payerEmail ?? data.payer?.email_address ?? null,
+      };
+    }
+    const pending = details?.captures.find((c) => c.status === "PENDING");
     return {
-      ok: res.ok && capture?.status === "COMPLETED",
-      status: data.status ?? null,
-      captureId: capture?.id ?? null,
-      captureStatus: capture?.status ?? null,
-      payerEmail: data.payer?.email_address ?? null,
+      ok: false,
+      status: details?.status ?? data.status ?? null,
+      captureId: capture?.id ?? pending?.id ?? null,
+      captureStatus: capture?.status ?? pending?.status ?? null,
+      payerEmail: details?.payerEmail ?? data.payer?.email_address ?? null,
     };
   } catch {
     return { ok: false, status: null, captureId: null, captureStatus: null, payerEmail: null };
