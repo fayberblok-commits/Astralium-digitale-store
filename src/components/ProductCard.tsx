@@ -35,7 +35,7 @@ export default function ProductCard({
       <div className="card-cover-wrap">
         <Tilt>
           <Link href={`/${locale}/product/${product.slug}`} className="card-cover-link" aria-label={product.title}>
-            <Cover title={product.title} category={product.category} hue={product.hue} />
+            <Cover title={product.title} category={product.category} hue={product.hue} id={product.id} />
           </Link>
         </Tilt>
         {product.badge && (
@@ -68,6 +68,10 @@ export default function ProductCard({
           )}
         </p>
         <div className="card-actions">
+          {/* 2026-11 redesign: the mockups' VIEW BOOK outline action. */}
+          <Link href={`/${locale}/product/${product.slug}`} className="btn card-view-btn">
+            {dict.view_book}
+          </Link>
           <AddToCartButton
             locale={locale}
             addLabel={dict.add_to_cart}
