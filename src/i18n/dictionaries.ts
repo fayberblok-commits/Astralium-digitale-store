@@ -95,6 +95,7 @@ const en: Dict = {
   checkout_email_hint:
     "Only for your receipt and a backup copy of your download links. Your book is delivered right here on this page after payment — no email is needed to buy or download.",
   pay_or_card: "Or pay by card",
+  pay_preparing: "Preparing secure payment…",
   pay_card_name: "Name on card",
   pay_by_card_btn: "Pay by card",
   pay_error: "The payment could not be completed. Please check your details and try again — no charge was made.",
@@ -947,6 +948,7 @@ const ar: Dict = {
   checkout_email_hint:
     "لإيصال الدفع ونسخة احتياطية من روابط التحميل فقط. يُسلَّم كتابك هنا في هذه الصفحة مباشرة بعد الدفع — لا حاجة للبريد الإلكتروني للشراء أو التحميل.",
   pay_or_card: "أو ادفع بالبطاقة البنكية",
+  pay_preparing: "جاري تجهيز الدفع الآمن…",
   pay_card_name: "الاسم على البطاقة",
   pay_by_card_btn: "ادفع بالبطاقة",
   pay_error: "تعذّر إتمام الدفع. تحقق من بياناتك وحاول مجدداً — لم يتم أي خصم.",
