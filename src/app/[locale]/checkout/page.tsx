@@ -3,7 +3,7 @@ import { currentCurrency } from "../../../lib/server";
 import { channelAvailability } from "../../../services/delivery";
 import { getFlag } from "../../../lib/flags";
 import { listFlashSales, resolveFlashPrices } from "../../../lib/flash-sales";
-import { PRODUCTS, getProductById } from "../../../data/products";
+import { getStorefrontProductById, getStorefrontProducts } from "../../../lib/catalog";
 import { resolveBundle } from "../../../lib/bundles";
 import { parseExpressId } from "../../../lib/express";
 import { paypalClientId } from "../../../lib/paypal";
@@ -37,7 +37,9 @@ export default async function CheckoutPage({
   ]);
   let flashPrices: Record<string, number> = {};
   if (flashOn) {
-    const prices = resolveFlashPrices(await listFlashSales(), PRODUCTS.map((p) => p.id), getProductById);
+    const catalog = await getStorefrontProducts();
+    const catalogById = new Map(catalog.map((p) => [p.id, p]));
+    const prices = resolveFlashPrices(await listFlashSales(), catalog.map((p) => p.id), (id) => catalogById.get(id));
     flashPrices = Object.fromEntries([...prices.values()].map((fp) => [fp.productId, fp.priceUSD]));
   }
   const features = {
@@ -52,11 +54,16 @@ export default async function CheckoutPage({
   // ?express=<id>; the checkout then contains ONLY that item and the
   // cart is never read into it. Resolved with the SAME catalog/bundle
   // functions /api/checkout prices from, so display and charge agree.
-  // An unknown id simply falls back to the normal cart checkout.
+  // (Thermal fix: this page resolved through the static SEED list —
+  // the five real books are office-created catalog products, so BUY
+  // NOW silently fell back to the cart for every one of them, while a
+  // deactivated seed product resolved here and then died at the API.)
+  // An id that resolves nowhere falls back to the normal cart
+  // checkout, whose catalog sync explains any pruning to the buyer.
   let expressItem: CartItem | null = null;
   const expressId = parseExpressId(sp.express);
   if (expressId) {
-    const product = getProductById(expressId);
+    const product = await getStorefrontProductById(expressId);
     if (product) {
       expressItem = {
         id: product.id, kind: "product", slug: product.slug, title: product.title,
