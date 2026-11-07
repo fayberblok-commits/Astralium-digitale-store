@@ -113,9 +113,12 @@ export default function PayPalSdk({
   const cardFieldsRef = useRef<PaypalCardFieldsInstance | null>(null);
 
   // Always invoke the LATEST checkout state (email, coupon, gifts…)
-  // without re-rendering the SDK widgets on every keystroke.
+  // without re-rendering the SDK widgets on every keystroke. The ref
+  // is updated in an effect (never during render).
   const callbacks = useRef({ createOrder, captureOrder, onError });
-  callbacks.current = { createOrder, captureOrder, onError };
+  useEffect(() => {
+    callbacks.current = { createOrder, captureOrder, onError };
+  });
   const errorLabel = labels.error;
 
   useEffect(() => {
