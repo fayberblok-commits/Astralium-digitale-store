@@ -1,11 +1,11 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dict } from "../i18n/dictionaries";
 import { useStore, type CartItem, type OrderRecord } from "../lib/store";
 import { formatPrice } from "../lib/currency";
 import { priceCart } from "../lib/coupons";
 import { byoDiscount } from "../lib/byo";
-import { PRODUCTS, getProductById } from "../data/products";
+import { getProductById } from "../data/products";
 import Cover from "./Cover";
 import { normalizePhone, PHONE_COUNTRIES, countryForLocalePhone } from "../lib/phone";
 import { readPwywChoices } from "./ProductCommerce";
@@ -63,11 +63,18 @@ export default function CheckoutClient({
    *  and the cart is left completely untouched. */
   expressItem?: CartItem | null;
 }) {
-  const { cart, subtotal, clear, saveOrder } = useStore();
+  const { cart, subtotal, clear, saveOrder, prunedTitles, dismissPruned, syncCartWithCatalog } = useStore();
   // The single item list every total, payload and summary below is
   // computed from: the express item alone, or the cart as-is.
   const items = checkoutItemsFor(expressItem ?? null, cart);
   const expressMode = Boolean(expressItem);
+  // Thermal fix: a cart checkout first reconciles the on-device cart
+  // snapshot with the live catalog (dead items pruned with a notice,
+  // prices refreshed). Express checkout never touches the cart — its
+  // item was resolved server-side from the catalog already.
+  useEffect(() => {
+    if (!expressMode) void syncCartWithCatalog();
+  }, [expressMode, syncCartWithCatalog]);
   // Phase 6, feature 27: reaching checkout is a funnel step (no-op
   // unless the analytics beacon is mounted).
   useEffect(() => { track("checkout_start"); }, []);
@@ -89,6 +96,15 @@ export default function CheckoutClient({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // When a capture may have moved money (pending review, or captured
+  // but fulfilment unconfirmed), the buyer gets the honest
+  // "being confirmed" message plus this link to the success page,
+  // which polls the ledger until the downloads unlock.
+  const [confirmingUrl, setConfirmingUrl] = useState<string | null>(null);
+  // The mapped, buyer-readable error from the last /api/checkout call.
+  // The PayPal SDK overwrites errors with its generic label on any
+  // throw — this ref lets onError keep OUR precise message instead.
+  const serverErrorRef = useRef<string | null>(null);
   // Delivery channel (Phase 2): email default; social channels appear only
   // when the server says their flag is on AND the provider is configured.
   const [channel, setChannel] = useState<ChannelKey>("email");
@@ -132,7 +148,13 @@ export default function CheckoutClient({
   const bumpTotal = bumps
     .filter((b) => selectedBumps.includes(b.productId))
     .reduce((s, b) => s + Math.round(b.priceUSD * (1 - b.discountPercent / 100) * 100) / 100, 0);
-  const byo = byoDiscount(items.filter((i) => i.kind === "product").map((i) => i.id), PRODUCTS);
+  // BYO display estimate priced from the checkout items themselves
+  // (catalog-synced): the seed list cannot see office-created books,
+  // so the discount the server will apply never showed here.
+  const byo = byoDiscount(
+    items.filter((i) => i.kind === "product").map((i) => i.id),
+    items.map((i) => ({ id: i.id, priceUSD: i.priceUSD })),
+  );
 
   // Phase 4 display pricing: PWYW choices (session) and flash-sale
   // prices (server-computed, passed as props) override catalog prices
@@ -269,7 +291,7 @@ export default function CheckoutClient({
   }
 
   interface CheckoutResponse {
-    url?: string | null; error?: string; sessionId?: string; providerOrderId?: string;
+    url?: string | null; error?: string; items?: string[]; sessionId?: string; providerOrderId?: string;
     pricing?: { totalUSD: number };
   }
 
@@ -287,7 +309,12 @@ export default function CheckoutClient({
     if (!prepared) return null;
     setBusy(true);
     setError(null);
-    const orderId = `AST-${Date.now().toString(36).toUpperCase()}`;
+    setConfirmingUrl(null);
+    serverErrorRef.current = null;
+    // Millisecond timestamps alone can collide (two checkouts in the
+    // same ms share an id and the second order loses its ledger row);
+    // a random suffix keeps every attempt's id unique.
+    const orderId = `AST-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
     try {
       const res = await fetch("/api/checkout", {
         method: "POST",
@@ -311,11 +338,19 @@ export default function CheckoutClient({
       const data = (await res.json()) as CheckoutResponse;
       if (res.status === 503 || data.error === "PAYMENTS_NOT_CONFIGURED") {
         setError(dict.payments_not_configured);
+        serverErrorRef.current = dict.payments_not_configured;
         setBusy(false);
         return null;
       }
       if (!res.ok) {
-        setError(data.error ?? "Payment could not be started.");
+        // Buyer-readable mapping only — raw server codes
+        // (UNKNOWN_ITEM:…, PAYPAL_ORDER_FAILED, provider messages)
+        // are never shown verbatim. A dead cart item gets its own
+        // honest message + a fresh catalog sync that prunes it.
+        const mapped = data.error === "ITEM_UNAVAILABLE" ? dict.err_item_unavailable : dict.err_pay_start;
+        if (data.error === "ITEM_UNAVAILABLE") void syncCartWithCatalog();
+        setError(mapped);
+        serverErrorRef.current = mapped;
         setBusy(false);
         return null;
       }
@@ -340,7 +375,8 @@ export default function CheckoutClient({
       saveOrder(order);
       return { data, orderId };
     } catch {
-      setError("Network error — please retry.");
+      setError(dict.err_network);
+      serverErrorRef.current = dict.err_network;
       setBusy(false);
       return null;
     }
@@ -353,7 +389,7 @@ export default function CheckoutClient({
     const started = await startCheckout({ mode: "redirect", usedProvider });
     if (!started) return;
     if (!started.data.url) {
-      setError("Payment could not be started.");
+      setError(dict.err_pay_start);
       setBusy(false);
       return;
     }
@@ -376,17 +412,41 @@ export default function CheckoutClient({
   }
 
   /** PayPal SDK: capture on our server, then go to the success page
-   *  (which verifies against the ledger and issues the downloads). */
+   *  (which verifies against the ledger and issues the downloads).
+   *  Capture-stage honesty (thermal fix): once approval happened, a
+   *  failure must NEVER claim "no charge was made" — the capture may
+   *  have completed. Three outcomes are distinguished:
+   *   - paid        → navigate to the success page (downloads there);
+   *   - pending     → PayPal is reviewing the capture; the download
+   *                   unlocks automatically — show that, with the
+   *                   order-status link;
+   *   - unconfirmed → captured-but-unverified or a lost response:
+   *                   "being confirmed — do not pay again" + link. */
   async function sdkCaptureOrder(paypalOrderId: string): Promise<void> {
+    let data: { ok?: boolean; paid?: boolean; pending?: boolean; successUrl?: string; error?: string } = {};
     try {
       const res = await fetch("/api/checkout/capture", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ providerOrderId: paypalOrderId }),
       });
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; successUrl?: string; error?: string };
+      data = (await res.json().catch(() => ({}))) as typeof data;
+      if (data.pending || data.error === "CAPTURE_PENDING") {
+        setError(dict.err_capture_pending);
+        serverErrorRef.current = dict.err_capture_pending;
+        if (data.successUrl) setConfirmingUrl(data.successUrl);
+        setBusy(false);
+        throw new Error("capture-pending");
+      }
       if (!res.ok || !data.ok || !data.successUrl) {
         throw new Error(data.error ?? "capture-failed");
+      }
+      if (data.paid === false) {
+        setError(dict.err_charge_uncertain);
+        serverErrorRef.current = dict.err_charge_uncertain;
+        setConfirmingUrl(data.successUrl);
+        setBusy(false);
+        throw new Error("capture-unconfirmed");
       }
       if (shouldClearCart(expressItem)) {
         clear();
@@ -394,7 +454,12 @@ export default function CheckoutClient({
       }
       location.href = data.successUrl;
     } catch (err) {
-      setError(dict.pay_error);
+      if (err instanceof Error && (err.message === "capture-pending" || err.message === "capture-unconfirmed")) {
+        throw err; // precise message + link already set above
+      }
+      setError(dict.err_charge_uncertain);
+      serverErrorRef.current = dict.err_charge_uncertain;
+      if (data.successUrl) setConfirmingUrl(data.successUrl);
       setBusy(false);
       throw err;
     }
@@ -406,6 +471,15 @@ export default function CheckoutClient({
 
   return (
     <div className="two-col">
+      {!expressMode && prunedTitles.length > 0 && (
+        <div className="panel" style={{ gridColumn: "1 / -1" }} role="status">
+          <p style={{ margin: 0 }}>
+            <strong>{dict.item_removed_notice}</strong>{" "}
+            {prunedTitles.join(" · ")}{" "}
+            <button type="button" className="btn btn-ghost" onClick={dismissPruned} aria-label="✕">✕</button>
+          </p>
+        </div>
+      )}
       <div className="panel">
         <p className="muted">{dict.checkout_guest}</p>
         <div className="checkout-form">
@@ -475,7 +549,7 @@ export default function CheckoutClient({
               }}
               createOrder={sdkCreateOrder}
               captureOrder={sdkCaptureOrder}
-              onError={(message) => { setError(message); setBusy(false); }}
+              onError={(message) => { setError(serverErrorRef.current ?? message); setBusy(false); }}
             />
           )}
           {offered.length > 1 && (
@@ -610,6 +684,11 @@ export default function CheckoutClient({
             </fieldset>
           )}
           {error && <p className="err-text" role="alert">{error}</p>}
+          {confirmingUrl && (
+            <p style={{ margin: 0 }}>
+              <a className="btn btn-ghost" href={confirmingUrl}>{dict.order_status_view}</a>
+            </p>
+          )}
           {provider === "paypal" && paypalClientId && (
             <p className="muted" style={{ margin: 0 }}>{dict.pay_redirect_fallback}</p>
           )}
@@ -652,6 +731,11 @@ export default function CheckoutClient({
           <p className="summary-row"><span>{dict.byo_discount_label}</span><span>−{formatPrice(byo.discountUSD, currency, locale)}</span></p>
         )}
         <p className="summary-row summary-total"><span>{dict.cart_total}</span><span>{formatPrice(totals.total, currency, locale)}</span></p>
+        {currency !== "USD" && (
+          <p className="muted" style={{ marginBottom: 0 }}>
+            {dict.charge_in_usd_note.replace("{amount}", `$${totals.total.toFixed(2)}`).replace("{currency}", currency)}
+          </p>
+        )}
       </div>
     </div>
   );
