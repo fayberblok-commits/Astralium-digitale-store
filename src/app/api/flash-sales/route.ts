@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { getProductById } from "../../../data/products";
 import { getFlag } from "../../../lib/flags";
 import { campaignState, flashUnitPrice, listFlashSales } from "../../../lib/flash-sales";
+import { getStorefrontProducts } from "../../../lib/catalog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +18,9 @@ export async function GET() {
   }
   const now = new Date();
   const sales = await listFlashSales();
+  // Campaign items resolve against the LIVE storefront catalog only
+  // (register item 82 fix): a product that is not on sale is not listed.
+  const byId = new Map((await getStorefrontProducts()).map((p) => [p.id, p]));
   const active = sales
     .filter((s) => campaignState(s, now) === "active")
     .map((s) => ({
@@ -28,7 +31,7 @@ export async function GET() {
       endsAt: s.endsAt, // server-provided countdown target
       remaining: s.quantityCap === null ? null : Math.max(0, s.quantityCap - s.soldCount),
       items: s.productIds
-        .map((pid) => getProductById(pid))
+        .map((pid) => byId.get(pid))
         .filter((p): p is NonNullable<typeof p> => Boolean(p))
         .map((p) => ({ productId: p.id, slug: p.slug, title: p.title, fullPriceUSD: p.priceUSD, priceUSD: flashUnitPrice(s, p) })),
     }));
