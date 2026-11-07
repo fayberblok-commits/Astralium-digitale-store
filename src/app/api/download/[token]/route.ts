@@ -10,7 +10,7 @@ import { getDb } from "../../../../lib/db";
 import { isStorageConfigured, presignGet } from "../../../../services/storage";
 // Phase 1 upgrade (F1/§8): ledger grants are the revocable, counted
 // enforcement layer on top of the signed token.
-import { consumeGrantDownload, getGrantByToken } from "../../../../lib/orders";
+import { consumeGrantDownload, findOrder, getGrantByToken } from "../../../../lib/orders";
 
 export const runtime = "nodejs";
 
@@ -40,9 +40,12 @@ async function resolveOrderEmail(orderId: string): Promise<string | null> {
  * the product's file binding (DB Product.fileKey → local .data store →
  * catalog): when a real file is bound and storage is configured, the buyer
  * is 302-redirected to a 15-minute presigned S3 GET URL — raw storage URLs
- * are never handed out. Otherwise it falls back to the generated licensed
- * deliverable (the pipeline proof used before product files are uploaded).
- * Expiry and the download cap (`max`) travel inside the signed token.
+ * are never handed out. When storage is configured but the binding is
+ * missing or unreadable, the route fails loudly with 502 (finding 73) —
+ * the generated licensed deliverable is served ONLY when no storage is
+ * configured at all (the local/dev pipeline proof). Expiry and the
+ * download cap (`max`) travel inside the signed token; tokens naming a
+ * ledger order must additionally be that order's grant token (finding 71).
  */
 export async function GET(
   _req: NextRequest,
@@ -92,6 +95,22 @@ export async function GET(
   if (grant?.revokedAt) {
     return NextResponse.json({ error: "GRANT_REVOKED" }, { status: 403 });
   }
+  if (!grant) {
+    // Delivery-audit finding 71 (defence in depth): a token naming an
+    // order the ledger knows MUST be that order's grant token.
+    // Ledger-era orders are grant-governed, so a grant-less token for
+    // one is refused even though its signature verifies — the minting
+    // paths that once produced such tokens from client claims (the
+    // library) or per page view (the success page) now hand out grant
+    // tokens only. Tokens naming orders the ledger has never seen
+    // keep the documented pre-ledger semantics (signature + embedded
+    // expiry/cap), so links issued before the ledger existed are not
+    // stranded.
+    const ledgerOrder = await findOrder(result.payload.oid).catch(() => null);
+    if (ledgerOrder) {
+      return NextResponse.json({ error: "GRANT_REQUIRED" }, { status: 403 });
+    }
+  }
   const consumeGrant = async (): Promise<NextResponse | null> => {
     if (!grant) return null;
     let counted = true;
@@ -111,7 +130,7 @@ export async function GET(
   if (isStorageConfigured()) {
     let binding: Awaited<ReturnType<typeof getBinding>> = null;
     try {
-      binding = await getBinding(product.id);
+      binding = await getBinding(product.id, { strict: true });
     } catch (err) {
       // With storage configured, a binding lookup failure leaves the
       // delivery state UNKNOWN — serving the placeholder then would
@@ -159,8 +178,19 @@ export async function GET(
       console.log(JSON.stringify({ event: "download.bound-file-unavailable", orderId: result.payload.oid, productId: product.id, fileKey: binding.fileKey }));
       return NextResponse.json({ error: "DELIVERY_TEMPORARILY_UNAVAILABLE" }, { status: 502 });
     }
+    // Delivery-audit finding 73: storage IS configured (production)
+    // but this product has NO file bound — the binding is absent, or
+    // the binding lookup fell through after a database error. Serving
+    // the generated placeholder here would hand a paying buyer a fake
+    // deliverable (the old M13 deception, still reachable whenever a
+    // binding was missing). Fail loudly instead: 502, logged, and no
+    // grant count consumed, so the buyer can retry once the binding
+    // is restored. The placeholder below remains only for deployments
+    // with NO storage configured (local/dev pipeline proof).
+    console.log(JSON.stringify({ event: "download.binding-missing", orderId: result.payload.oid, productId: product.id }));
+    return NextResponse.json({ error: "DELIVERY_TEMPORARILY_UNAVAILABLE" }, { status: 502 });
   }
-  // No real file is bound for this product: the generated licensed
+  // No storage configured (local/dev): the generated licensed
   // deliverable is the delivery (pipeline proof). The grant count is
   // consumed now — at the serve decision, not before it.
   const refused = await consumeGrant();
