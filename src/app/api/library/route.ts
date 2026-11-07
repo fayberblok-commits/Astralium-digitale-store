@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../lib/flags";
 import { buildLibraryEntries, ordersForEmailDb, localOrdersToInputs, versionMapFor, type LibraryOrderInput } from "../../../lib/library";
+import { listAdminProducts } from "../../../lib/catalog";
 import { getLoyaltyBalance } from "../../../lib/loyalty";
 import { httpErrorResponse, readJsonBody } from "../../../lib/http";
 
@@ -31,6 +32,13 @@ export async function POST(req: NextRequest) {
     return httpErrorResponse(err);
   }
 
+  // Product resolution runs against the real catalog (all products,
+  //  incl. since-deactivated ones — a buyer keeps library access to
+  //  what they paid for). The seed list alone dropped the real books.
+  const { products: catalogAll } = await listAdminProducts();
+  const catalogById = new Map(catalogAll.map((p) => [p.id, p]));
+  const catalogIds = new Set(catalogById.keys());
+
   let orders: LibraryOrderInput[] = [];
   let source: "db" | "device" = "device";
   if (body?.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
@@ -41,10 +49,10 @@ export async function POST(req: NextRequest) {
     }
   }
   if (source === "device" && Array.isArray(body?.localOrders)) {
-    orders = localOrdersToInputs(body.localOrders.slice(0, 50));
+    orders = localOrdersToInputs(body.localOrders.slice(0, 50), catalogIds);
   }
   const versions = await versionMapFor(orders);
-  const entries = buildLibraryEntries(orders, versions);
+  const entries = buildLibraryEntries(orders, versions, undefined, catalogById);
   // Phase 4, feature 11: loyalty balance rides along when the customer
   // identified themselves with an email and the flag is on.
   let loyalty: { balance: number; tier: string } | null = null;
