@@ -63,8 +63,16 @@ export function maskEmail(email: string): string {
   return `${(local ?? "").slice(0, 2)}***@${domain}`;
 }
 
-export function validateGiftInput(input: GiftInput): { ok: boolean; error?: string } {
-  if (!getProductById(input.productId)) return { ok: false, error: "PRODUCT_NOT_FOUND" };
+export function validateGiftInput(
+  input: GiftInput,
+  knownProductIds?: ReadonlySet<string>,
+): { ok: boolean; error?: string } {
+  // Product existence is a CATALOG question: callers with the resolved
+  // (DB-first) catalog pass its id set — office-created products live
+  // only there. Without a set, the static seed list is the fallback
+  // (unit tests, seed-only contexts).
+  const known = knownProductIds ? knownProductIds.has(input.productId) : Boolean(getProductById(input.productId));
+  if (!known) return { ok: false, error: "PRODUCT_NOT_FOUND" };
   if (!EMAIL_RE.test(localSafe(input.recipientEmail))) return { ok: false, error: "INVALID_RECIPIENT_EMAIL" };
   if (input.message && input.message.length > 500) return { ok: false, error: "MESSAGE_TOO_LONG" };
   if (input.sendAt && Number.isNaN(new Date(input.sendAt).getTime())) return { ok: false, error: "INVALID_SEND_DATE" };
