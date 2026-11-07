@@ -9,8 +9,14 @@
  *
  * Every recommendation carries a machine-readable reason code the UI
  * renders as a label: "also_bought" | "similar_category" | "top_rated".
+ *
+ * CATALOG DISCIPLINE (register item 82 fix): the engine scores ONLY the
+ * catalog the caller passes in — in production that is the LIVE
+ * storefront catalog (lib/catalog.ts). There is deliberately NO default
+ * catalog: omitting it yields zero recommendations (fail-closed), so
+ * the static seed list can never leak onto a customer surface again.
  */
-import { PRODUCTS, getProductById, type Product } from "../data/products.ts";
+import type { Product } from "../data/products.ts";
 
 export type ReasonCode = "also_bought" | "similar_category" | "top_rated";
 
@@ -31,7 +37,9 @@ export interface RecommendationInput {
   viewedIds?: string[];
   /** Products to exclude (already owned / in cart). */
   excludeIds?: string[];
-  catalog?: Product[];
+  /** The ONLY catalog that may be scored — the live storefront catalog
+   *  in production. Required: there is no implicit fallback list. */
+  catalog: Product[];
   limit?: number;
 }
 
@@ -49,7 +57,9 @@ export function coPurchaseCounts(baskets: string[][], targetId: string): Map<str
 }
 
 export function scoreRecommendations(input: RecommendationInput): ScoredRecommendation[] {
-  const catalog = input.catalog ?? PRODUCTS;
+  // Fail-closed: a caller that forgets the catalog gets NO recommendations
+  // rather than a fallback list (the seed leak of register item 82).
+  const catalog = input.catalog ?? [];
   const limit = input.limit ?? 4;
   const exclude = new Set<string>(input.excludeIds ?? []);
   if (input.targetId) exclude.add(input.targetId);
@@ -108,8 +118,11 @@ export function basketsFromOrders(orders: { items: { productId: string }[] }[]):
   return orders.map((o) => o.items.map((i) => i.productId));
 }
 
-export function recommendationProducts(recs: ScoredRecommendation[]): Product[] {
+/** Resolve scored recommendations against the SAME catalog that was
+ *  scored — never against any other product list. */
+export function recommendationProducts(recs: ScoredRecommendation[], catalog: Product[]): Product[] {
+  const byId = new Map(catalog.map((p) => [p.id, p]));
   return recs
-    .map((r) => getProductById(r.productId))
+    .map((r) => byId.get(r.productId))
     .filter((p): p is Product => Boolean(p));
 }
