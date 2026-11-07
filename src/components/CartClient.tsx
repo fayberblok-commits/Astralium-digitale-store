@@ -82,6 +82,7 @@ export default function CartClient({ locale, dict, currency }: { locale: string;
                 placeholder star, matching the mockups' cart/summary. */}
             <span className="cart-thumb" aria-hidden="true">
               <Cover
+                id={item.id}
                 title={item.title}
                 category={item.kind === "product" ? (PRODUCTS.find((p) => p.id === item.id)?.category ?? "ebooks") : "templates"}
                 hue={item.hue}
