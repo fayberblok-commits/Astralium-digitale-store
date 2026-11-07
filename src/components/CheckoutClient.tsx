@@ -49,6 +49,7 @@ export default function CheckoutClient({
   features,
   flashPrices,
   paypalClientId,
+  paypalClientToken,
   expressItem,
 }: {
   locale: string;
@@ -59,6 +60,8 @@ export default function CheckoutClient({
   flashPrices: Record<string, number>;
   /** Public PayPal client id (server-rendered) for the on-page SDK. */
   paypalClientId?: string | null;
+  /** Server-minted Card Fields client token; absent → Buttons only. */
+  paypalClientToken?: string | null;
   /** Express intent: when set, this checkout contains ONLY this item
    *  and the cart is left completely untouched. */
   expressItem?: CartItem | null;
@@ -540,6 +543,7 @@ export default function CheckoutClient({
           {provider === "paypal" && paypalClientId && (
             <PayPalSdk
               clientId={paypalClientId}
+              clientToken={paypalClientToken}
               labels={{
                 orCard: dict.pay_or_card,
                 cardName: dict.pay_card_name,
