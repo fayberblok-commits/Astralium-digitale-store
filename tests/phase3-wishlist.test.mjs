@@ -10,6 +10,7 @@ const { encodeShareItems, parseShareItems } = await import("../src/lib/share.ts"
 const alerts = await import("../src/lib/wishlist-alerts.ts");
 const { decryptPii, hashSubject } = await import("../src/lib/pii.ts");
 const { getFlag } = await import("../src/lib/flags.ts");
+const { PRODUCTS } = await import("../src/data/products.ts");
 
 const EMAIL = "phase3-watcher@example.com";
 after(() => {
@@ -20,13 +21,13 @@ after(() => {
 });
 
 test("share link round-trip: slugs encode, parse back to the same products; junk dropped", () => {
-  const encoded = encodeShareItems(["ai-profit-blueprint", "not-a-product", "deep-focus-masterclass"]);
+  const encoded = encodeShareItems(["ai-profit-blueprint", "not-a-product", "deep-focus-masterclass"], PRODUCTS);
   assert.equal(encoded, "ai-profit-blueprint,deep-focus-masterclass");
-  const parsed = parseShareItems(encoded);
+  const parsed = parseShareItems(encoded, PRODUCTS);
   assert.deepEqual(parsed.map((p) => p.slug), ["ai-profit-blueprint", "deep-focus-masterclass"]);
-  assert.deepEqual(parseShareItems("ai-profit-blueprint,ai-profit-blueprint").length, 1);
-  assert.deepEqual(parseShareItems(""), []);
-  assert.deepEqual(parseShareItems(null), []);
+  assert.deepEqual(parseShareItems("ai-profit-blueprint,ai-profit-blueprint", PRODUCTS).length, 1);
+  assert.deepEqual(parseShareItems("", PRODUCTS), []);
+  assert.deepEqual(parseShareItems(null, PRODUCTS), []);
 });
 
 test("price drops fire only on an actual decrease — not on equal or higher prices", () => {
