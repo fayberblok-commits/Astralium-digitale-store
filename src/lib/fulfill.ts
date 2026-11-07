@@ -5,7 +5,7 @@
  */
 import { createDownloadToken } from "./tokens";
 import { STRIPE_API_VERSION } from "./stripe";
-import { getProductById } from "../data/products";
+import { listAdminProducts } from "./catalog";
 import { getOrderByRef } from "./orders";
 
 export interface VerifiedOrder {
@@ -70,10 +70,18 @@ export async function verifyPaypalOrder(providerOrderId: string): Promise<Verifi
   };
 }
 
-/** Build signed download URLs for a verified order. */
-export function downloadLinksFor(order: VerifiedOrder): { productId: string; title: string; url: string }[] {
+/**
+ * Build signed download URLs for a verified order. Products resolve
+ * from the real catalog (DB-first, all products incl. inactive — a
+ * buyer keeps access to what they paid for). Resolving against the
+ * static seed list alone silently dropped office-created products:
+ * the success page showed a paid buyer NO download links.
+ */
+export async function downloadLinksFor(order: VerifiedOrder): Promise<{ productId: string; title: string; url: string }[]> {
+  const { products } = await listAdminProducts();
+  const byId = new Map(products.map((p) => [p.id, p]));
   return order.productIds
-    .map((pid) => getProductById(pid))
+    .map((pid) => byId.get(pid))
     .filter((p): p is NonNullable<typeof p> => Boolean(p))
     .map((p) => ({
       productId: p.id,
