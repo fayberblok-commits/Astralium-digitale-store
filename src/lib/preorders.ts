@@ -15,7 +15,7 @@
 import { getProductById } from "../data/products.ts";
 import { getJsonConfig, setJsonConfig } from "./config-store.ts";
 import { getDb } from "./db.ts";
-import { createDownloadToken } from "./tokens.ts";
+import { getOrderById, grantTokensForOrder } from "./orders.ts";
 import { sendEmail } from "../services/email.ts";
 
 export type PreorderConfig = Record<string, { releaseDate: string }>;
@@ -134,9 +134,22 @@ export async function runPreorderReleaseJob(now: Date = new Date()): Promise<{ o
   const due = releasesDue(orders, config, notified, now);
   const base = (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/$/, "");
   let emailed = 0;
+  // Finding 74: release emails carry the order's GRANT token (the
+  // grant was created at payment) — never a fresh grant-less token,
+  // which the download route now refuses for ledger orders.
+  const tokenMaps = new Map<string, Map<string, string>>();
   for (const item of due) {
     const product = getProductById(item.productId);
-    const url = `${base}/api/download/${createDownloadToken(item.productId, item.orderId)}`;
+    if (!tokenMaps.has(item.orderId)) {
+      const order = await getOrderById(item.orderId).catch(() => null);
+      tokenMaps.set(item.orderId, order ? await grantTokensForOrder(order) : new Map());
+    }
+    const token = tokenMaps.get(item.orderId)?.get(item.productId);
+    if (!token) {
+      console.log(JSON.stringify({ event: "preorder.release.no-grant-token", orderId: item.orderId, productId: item.productId }));
+      continue;
+    }
+    const url = `${base}/api/download/${token}`;
     await sendEmail({
       to: item.email,
       kind: "preorder-release",
