@@ -79,7 +79,7 @@ export default function QuickView({
               ✕
             </button>
             <div className="qv-grid">
-              <Cover title={product.title} category={product.category} hue={product.hue} size="lg" />
+              <Cover title={product.title} category={product.category} hue={product.hue} size="lg" id={product.id} />
               <div className="qv-body">
                 <p className="muted" style={{ textTransform: "uppercase", letterSpacing: "0.08em", margin: 0 }}>
                   {labels.category}
