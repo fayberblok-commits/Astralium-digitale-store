@@ -550,6 +550,7 @@ export default function CheckoutClient({
                 payByCard: dict.pay_by_card_btn,
                 processing: dict.processing,
                 error: dict.pay_error,
+                preparing: dict.pay_preparing,
               }}
               createOrder={sdkCreateOrder}
               captureOrder={sdkCaptureOrder}
