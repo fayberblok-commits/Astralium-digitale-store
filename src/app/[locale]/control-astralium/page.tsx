@@ -2,7 +2,8 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { ADMIN_COOKIE, providerStatus } from "../../../lib/admin";
 import { actorFromCookie, can } from "../../../lib/team";
-import { PRODUCTS, BUNDLES, CATEGORIES } from "../../../data/products";
+import { BUNDLES, CATEGORIES } from "../../../data/products";
+import { listAdminProducts } from "../../../lib/catalog";
 import { COUPONS } from "../../../lib/coupons";
 import { getDictionary } from "../../../i18n/dictionaries";
 import { isStorageConfigured } from "../../../services/storage";
@@ -70,8 +71,15 @@ export default async function AdminDashboard({ params }: { params: Promise<{ loc
   const dict = getDictionary(locale);
   const storageOn = isStorageConfigured();
   const dbOn = isDbConfigured();
-  const catalogValue = PRODUCTS.reduce((s, p) => s + p.priceUSD, 0);
-  const avgRating = (PRODUCTS.reduce((s, p) => s + p.rating, 0) / PRODUCTS.length).toFixed(2);
+  // The office must see the REAL catalog (database source of truth),
+  // not only the seed list: products created here live in the DB, and
+  // every manager below (files, versions, offers…) keys off these refs.
+  const adminCatalog = await listAdminProducts();
+  const catalogProducts = adminCatalog.products;
+  const catalogValue = catalogProducts.reduce((s, p) => s + p.priceUSD, 0);
+  const avgRating = catalogProducts.length
+    ? (catalogProducts.reduce((s, p) => s + p.rating, 0) / catalogProducts.length).toFixed(2)
+    : "0.00";
   const themeSettings = await getThemeSettings();
 
   const stepUpDict = {
@@ -81,7 +89,7 @@ export default async function AdminDashboard({ params }: { params: Promise<{ loc
     submit: dict.admin_security_stepup,
     done: dict.admin_security_stepup_done,
   };
-  const productRefs = PRODUCTS.map((p) => ({ id: p.id, title: p.title }));
+  const productRefs = catalogProducts.map((p) => ({ id: p.id, title: p.title }));
 
   const sections: OfficeSection[] = [];
 
@@ -91,7 +99,7 @@ export default async function AdminDashboard({ params }: { params: Promise<{ loc
     node: (
       <div>
         <div className="admin-grid">
-          <div className="stat-card"><span className="muted">Products</span><strong>{PRODUCTS.length}</strong></div>
+          <div className="stat-card"><span className="muted">Products</span><strong>{catalogProducts.length}</strong></div>
           <div className="stat-card"><span className="muted">Bundles</span><strong>{BUNDLES.length}</strong></div>
           <div className="stat-card"><span className="muted">Catalog value (USD)</span><strong>${catalogValue}</strong></div>
           <div className="stat-card"><span className="muted">Average rating</span><strong>{avgRating} ★</strong></div>
