@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyDownloadToken } from "../../../../lib/tokens";
-import { getProductById } from "../../../../data/products";
+import { listAdminProducts } from "../../../../lib/catalog";
 import { getBinding } from "../../../../lib/bindings";
 import { getFlag } from "../../../../lib/flags";
 import { downloadGate } from "../../../../lib/preorders";
@@ -53,7 +53,11 @@ export async function GET(
   if (!result.ok) {
     return NextResponse.json({ error: "INVALID_OR_EXPIRED_LINK", reason: result.reason }, { status: 403 });
   }
-  const product = getProductById(result.payload.pid);
+  // Resolve from the real catalog (DB-first, all products incl.
+  // inactive — a buyer keeps access to what they paid for). The seed
+  // list alone 404'd every office-created product's download.
+  const { products: catalogAll } = await listAdminProducts();
+  const product = catalogAll.find((p) => p.id === result.payload.pid) ?? null;
   if (!product) {
     return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 404 });
   }
