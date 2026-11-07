@@ -621,6 +621,20 @@ input:focus, textarea:focus { border-color: var(--gold); outline: none; }
 html.js [data-reveal] { opacity: 0; transform: translateY(16px); transition: opacity 0.7s ease, transform 0.7s ease; }
 html.js [data-reveal].in { opacity: 1; transform: none; }
 
+/* Backstop (2026-11 mobile fix): content that has ARRIVED must never sit
+   invisible while the JS bundle is still travelling on a slow phone
+   connection. If ScrollReveal has not marked a section .in within a
+   grace period, CSS reveals it on its own. The :not(.in) guard removes
+   this animation the moment JS reveals the section, and the keyframe
+   end-state is identical to .in, so the normal path is unchanged. It
+   extends the component's own 2.5s JS safety timer to the case where
+   the JS itself is late — the timer ScrollReveal cannot run yet. */
+@keyframes reveal-backstop { to { opacity: 1; transform: none; } }
+html.js [data-reveal]:not(.in) { animation: reveal-backstop 0.7s ease 4s forwards; }
+@media (prefers-reduced-motion: reduce) {
+  html.js [data-reveal]:not(.in) { animation-duration: 0.01s; }
+}
+
 /* owner motion toggle: freeze the decorative layer + marquee + covers */
 html[data-motion="off"] .aurora,
 html[data-motion="off"] .hero-orb,
@@ -1110,6 +1124,9 @@ html[data-motion="off"] .cycle-line { animation: none !important; }
 
 /* ── PayPal-branded express button (mockups) ───────────────────────── */
 .btn-paypal-brand {
+  /* The two-tone brand word is split into two inline runs ("Pay" +
+     "Pal"); force LTR so RTL pages cannot bidi-reorder it to "PalPay". */
+  direction: ltr;
   display: inline-flex; align-items: center; justify-content: center; width: 100%;
   background: linear-gradient(180deg, #ffd964, #f5b921); color: #123b7a;
   border: none; border-radius: 9px; padding: 14px 20px; min-height: 48px;
@@ -1301,6 +1318,34 @@ html[data-palette="astralium-noir"] .led-cover { animation: astralium-line-cycle
 html[data-motion="off"] .led-cover { animation: none !important; }
 @media (prefers-reduced-motion: reduce) {
   .led-cover { animation: none !important; }
+}
+
+/* ── promo trio (owner order 2026-11-07): three designed promo cards
+   per book, high on the product page. LED-framed like the real
+   covers; a row on desktop, a full-width stack on phones so every
+   card is completely visible without horizontal scroll. */
+.promo-trio {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.promo-card {
+  margin: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0b0b10;
+}
+.promo-card img { width: 100%; height: auto; aspect-ratio: 4 / 5; display: block; }
+.promo-card figcaption {
+  text-align: center;
+  padding: 10px 8px 12px;
+  font-family: var(--font-display);
+  letter-spacing: 0.05em;
+  color: var(--gold-ink);
+  background: #0b0b10;
+}
+@media (max-width: 700px) {
+  .promo-trio { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ── button identities: BUY glows gold, PAY glows emerald ──────────── */
