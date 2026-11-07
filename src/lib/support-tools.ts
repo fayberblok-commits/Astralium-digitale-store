@@ -15,7 +15,7 @@
  * without a database.
  */
 import { getDb } from "./db.ts";
-import { getProductBySlug, type Product } from "../data/products.ts";
+import type { Product } from "../data/products.ts";
 import { searchCatalog } from "../services/ai-support.ts";
 
 export interface SupportOrderView {
@@ -55,8 +55,12 @@ export const dbOrderFetcher: OrderFetcher = async (orderId) => {
       include: { items: true, deliveryAttempts: { orderBy: { createdAt: "desc" } }, downloadGrants: true },
     });
     if (!row) return null;
-    const { PRODUCTS } = await import("../data/products.ts");
-    const titleOf = (pid: string) => PRODUCTS.find((p) => p.id === pid)?.title ?? pid;
+    // Order-item titles resolve from the owner's catalog (admin view:
+    // a purchased product may since have been deactivated — its buyer
+    // still owns it). Never a static list (register item 82 fix).
+    const { listAdminProducts } = await import("./catalog.ts");
+    const { products: allProducts } = await listAdminProducts().catch(() => ({ products: [] as Product[] }));
+    const titleOf = (pid: string) => allProducts.find((p) => p.id === pid)?.title ?? pid;
     // Latest attempt per channel only — a compact delivery state.
     const seen = new Set<string>();
     const delivery: { channel: string; status: string }[] = [];
@@ -125,9 +129,11 @@ export function composeOrderAnswer(result: OrderLookupResult): string {
 }
 
 // ─── Product tools ───────────────────────────────────────────────────────────
+// The catalog is an explicit input (the live storefront catalog at the
+// call site); omitted → no products (fail-closed, register item 82 fix).
 
-export function productSearch(query: string, limit = 3): Product[] {
-  return searchCatalog(query, limit);
+export function productSearch(query: string, limit = 3, catalog: Product[] = []): Product[] {
+  return searchCatalog(query, limit, catalog);
 }
 
 export interface ProductDetails {
@@ -140,8 +146,8 @@ export interface ProductDetails {
   description: string;
 }
 
-export function productDetails(slug: string): ProductDetails | null {
-  const p = getProductBySlug((slug ?? "").trim().toLowerCase());
+export function productDetails(slug: string, catalog: Product[] = []): ProductDetails | null {
+  const p = catalog.find((x) => x.slug === (slug ?? "").trim().toLowerCase());
   if (!p) return null;
   return {
     slug: p.slug, title: p.title, priceUSD: p.priceUSD, category: p.category,
