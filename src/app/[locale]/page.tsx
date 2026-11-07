@@ -26,6 +26,7 @@ import AbBeacon from "../../components/AbBeacon";
 import { cookies } from "next/headers";
 import { getFlag } from "../../lib/flags";
 import { AB_SLOT_HERO, AB_VISITOR_COOKIE, getAbConfig, heroHeadlineFor, runningExperimentForSlot } from "../../lib/ab";
+import { paypalClientId } from "../../lib/paypal";
 
 export default async function HomePage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
@@ -196,6 +197,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
               <ExpressPayPalButton
                 big
                 locale={locale}
+                clientId={paypalClientId()}
                 item={{
                   id: featured.id, kind: "product", slug: featured.slug,
                   title: featured.title, priceUSD: featured.priceUSD, hue: featured.hue,
