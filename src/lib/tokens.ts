@@ -35,6 +35,12 @@ function sign(data: string): string {
   return sig;
 }
 
+/** Sign an explicit payload — the single construction every token uses. */
+export function signDownloadTokenPayload(payload: DownloadTokenPayload): string {
+  const body = b64url(JSON.stringify(payload));
+  return `${body}.${sign(body)}`;
+}
+
 export function createDownloadToken(
   productId: string,
   orderId: string,
@@ -47,8 +53,7 @@ export function createDownloadToken(
     max: opts.maxDownloads ?? 5,
     n: randomBytes(6).toString("hex"),
   };
-  const body = b64url(JSON.stringify(payload));
-  return `${body}.${sign(body)}`;
+  return signDownloadTokenPayload(payload);
 }
 
 export type VerifyResult =
