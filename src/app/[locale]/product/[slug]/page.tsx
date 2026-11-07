@@ -10,6 +10,7 @@ import { getDictionary } from "../../../../i18n/dictionaries";
 import { currentCurrency, siteUrl } from "../../../../lib/server";
 import { formatPrice, formatProductPrice } from "../../../../lib/currency";
 import ProductGallery from "../../../../components/ProductGallery";
+import PromoTrio from "../../../../components/PromoTrio";
 import { FAQS } from "../../../../data/products";
 import ProductCard, { Stars } from "../../../../components/ProductCard";
 import { AddToCartButton, ExpressBuyButton, ExpressPayPalButton } from "../../../../components/Buttons";
@@ -193,6 +194,12 @@ export default async function ProductPage({
           </table>
         </div>
       </div>
+
+      {/* Promo trio (owner order 2026-11-07): three designed promo
+          cards for this book, immediately under the buy panel so a
+          customer sees them before anything else; renders only for
+          products that have a trio (the five books). */}
+      <PromoTrio productId={product.id} title={product.title} dict={dict} />
 
       <section className="section">
         <h2>{dict.preview_t}</h2>
