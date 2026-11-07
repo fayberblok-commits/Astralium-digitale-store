@@ -81,58 +81,90 @@ export async function GET(
     }
   }
   // Ledger grant enforcement (F1/§8): when this token was issued as a
-  // grant, a revocation (refund/dispute) or an exhausted download cap
-  // refuses the download even though the token itself still verifies.
+  // grant, a revocation (refund/dispute) refuses the download even
+  // though the token itself still verifies. The download COUNT is
+  // consumed only once the file is actually about to be served
+  // (thermal fix) — it used to burn on requests that then failed to
+  // deliver anything, and its own failures were swallowed silently.
   // Tokens without a grant row (issued before the ledger) keep the
   // token's own embedded expiry/cap semantics.
   const grant = await getGrantByToken(decodeURIComponent(token)).catch(() => null);
-  if (grant) {
-    if (grant.revokedAt) {
-      return NextResponse.json({ error: "GRANT_REVOKED" }, { status: 403 });
+  if (grant?.revokedAt) {
+    return NextResponse.json({ error: "GRANT_REVOKED" }, { status: 403 });
+  }
+  const consumeGrant = async (): Promise<NextResponse | null> => {
+    if (!grant) return null;
+    let counted = true;
+    try {
+      counted = await consumeGrantDownload(grant);
+    } catch (err) {
+      // Cap enforcement failing open is acceptable ONLY when loud.
+      console.log(JSON.stringify({ event: "download.grant-consume-failed", orderId: result.payload.oid, productId: product.id, error: String(err) }));
+      return null;
     }
-    const counted = await consumeGrantDownload(grant).catch(() => true);
     if (!counted) {
       return NextResponse.json({ error: "DOWNLOAD_LIMIT_REACHED" }, { status: 403 });
     }
-  }
+    return null;
+  };
   // Real file bound? Redirect to a short-lived presigned URL.
   if (isStorageConfigured()) {
+    let binding: Awaited<ReturnType<typeof getBinding>> = null;
     try {
-      const binding = await getBinding(product.id);
-      if (binding?.fileKey) {
-        // PDF watermarking (Phase 5, feature 17): PDFs are pulled through
-        // the app and served as a stamped copy (buyer email + order id on
-        // every page); the stored original is never modified. Encrypted/
-        // corrupt PDFs fall back to the original bytes with a log note.
-        // Non-PDFs keep the presigned redirect below.
-        if (await getFlag("watermarking")) {
-          const email = await resolveOrderEmail(result.payload.oid);
-          const fetched = await fetchStampedPdf(binding.fileKey, watermarkLine(email, result.payload.oid));
-          if (fetched) {
-            return new NextResponse(Buffer.from(fetched.bytes), {
-              status: 200,
-              headers: {
-                "Content-Type": "application/pdf",
-                "Content-Disposition": `attachment; filename="${product.slug}.pdf"`,
-                "Cache-Control": "private, no-store",
-                "X-Order-Id": result.payload.oid,
-                "X-Watermarked": fetched.stamped ? "1" : "0",
-              },
-            });
-          }
-        }
-        const url = presignGet(binding.fileKey, 900);
-        if (url) {
-          return NextResponse.redirect(url, {
-            status: 302,
-            headers: { "Cache-Control": "private, no-store", "X-Order-Id": result.payload.oid },
+      binding = await getBinding(product.id);
+    } catch (err) {
+      // With storage configured, a binding lookup failure leaves the
+      // delivery state UNKNOWN — serving the placeholder then would
+      // hand a paying buyer a fake deliverable. Honest 502 instead:
+      // no grant count is consumed and the buyer can retry.
+      console.log(JSON.stringify({ event: "download.binding-lookup-failed", orderId: result.payload.oid, productId: product.id, error: String(err) }));
+      return NextResponse.json({ error: "DELIVERY_TEMPORARILY_UNAVAILABLE" }, { status: 502 });
+    }
+    if (binding?.fileKey) {
+      // PDF watermarking (Phase 5, feature 17): PDFs are pulled through
+      // the app and served as a stamped copy (buyer email + order id on
+      // every page); the stored original is never modified. Encrypted/
+      // corrupt PDFs fall back to the original bytes with a log note.
+      // Non-PDFs keep the presigned redirect below.
+      if (await getFlag("watermarking")) {
+        const email = await resolveOrderEmail(result.payload.oid);
+        const fetched = await fetchStampedPdf(binding.fileKey, watermarkLine(email, result.payload.oid));
+        if (fetched) {
+          const refused = await consumeGrant();
+          if (refused) return refused;
+          return new NextResponse(Buffer.from(fetched.bytes), {
+            status: 200,
+            headers: {
+              "Content-Type": "application/pdf",
+              "Content-Disposition": `attachment; filename="${product.slug}.pdf"`,
+              "Cache-Control": "private, no-store",
+              "X-Order-Id": result.payload.oid,
+              "X-Watermarked": fetched.stamped ? "1" : "0",
+            },
           });
         }
       }
-    } catch {
-      // Binding lookup must never break delivery — fall through to fallback.
+      const url = presignGet(binding.fileKey, 900);
+      if (url) {
+        const refused = await consumeGrant();
+        if (refused) return refused;
+        return NextResponse.redirect(url, {
+          status: 302,
+          headers: { "Cache-Control": "private, no-store", "X-Order-Id": result.payload.oid },
+        });
+      }
+      // A real file IS bound but could not be fetched or signed: the
+      // placeholder below must never masquerade as this product's
+      // delivery. 502, logged, grant count untouched.
+      console.log(JSON.stringify({ event: "download.bound-file-unavailable", orderId: result.payload.oid, productId: product.id, fileKey: binding.fileKey }));
+      return NextResponse.json({ error: "DELIVERY_TEMPORARILY_UNAVAILABLE" }, { status: 502 });
     }
   }
+  // No real file is bound for this product: the generated licensed
+  // deliverable is the delivery (pipeline proof). The grant count is
+  // consumed now — at the serve decision, not before it.
+  const refused = await consumeGrant();
+  if (refused) return refused;
   const expiresISO = new Date(result.payload.exp * 1000).toISOString();
   const content = [
     `ASTRALIUM DIGITALE STORE — LICENSED DELIVERABLE`,
