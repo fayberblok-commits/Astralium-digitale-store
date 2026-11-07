@@ -11,8 +11,13 @@
  * longer). Every query token must match something for a result to rank.
  * Product fields are searched in whatever languages the catalog carries
  * (titles/subtitles/descriptions are language-agnostic strings here).
+ *
+ * Catalog discipline (register item 82 fix): callers pass the catalog to
+ * search — in production the live storefront catalog. There is NO
+ * implicit default list: omitting the catalog searches nothing
+ * (fail-closed), so the static seed can never surface through search.
  */
-import { PRODUCTS, productLanguage, type Product } from "../data/products.ts";
+import { productLanguage, type Product } from "../data/products.ts";
 
 export function normalizeText(s: string): string {
   return s
@@ -103,7 +108,7 @@ export function searchProducts(
   query: string,
   opts: { filters?: SearchFilters; catalog?: Product[]; limit?: number } = {},
 ): SearchHit[] {
-  const catalog = opts.catalog ?? PRODUCTS;
+  const catalog = opts.catalog ?? [];
   const filters = opts.filters ?? {};
   const pool = catalog.filter((p) => passesFilters(p, filters));
   const qTokens = tokensOf(query);
@@ -131,8 +136,9 @@ export function searchProducts(
     .slice(0, opts.limit ?? 48);
 }
 
-/** Instant suggestions: title-led matches for the dropdown. */
-export function suggestProducts(query: string, limit = 6, catalog: Product[] = PRODUCTS): Product[] {
+/** Instant suggestions: title-led matches for the dropdown. The catalog
+ *  is the caller's (live storefront in production); no default list. */
+export function suggestProducts(query: string, limit = 6, catalog: Product[] = []): Product[] {
   if (!normalizeText(query)) return [];
   return searchProducts(query, { catalog, limit }).map((h) => h.product);
 }
