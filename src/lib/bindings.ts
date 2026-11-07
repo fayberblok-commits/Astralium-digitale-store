@@ -39,7 +39,10 @@ async function writeStore(store: StoreShape): Promise<void> {
   await fs.writeFile(STORE_PATH, JSON.stringify(store, null, 2), "utf8");
 }
 
-export async function getBinding(productId: string): Promise<FileBinding | null> {
+export async function getBinding(
+  productId: string,
+  opts: { strict?: boolean } = {},
+): Promise<FileBinding | null> {
   // 1) Database first.
   try {
     const db = await getDb();
@@ -54,7 +57,13 @@ export async function getBinding(productId: string): Promise<FileBinding | null>
         };
       }
     }
-  } catch {
+  } catch (err) {
+    // Delivery-audit finding 73: swallowing a DB error here degrades
+    // the binding to "absent" — in production (where the JSON store
+    // is empty) a transient Neon blip then reads as "no file bound".
+    // Strict callers (the paid download route) opt into the throw so
+    // they can fail loudly instead of acting on a phantom absence.
+    if (opts.strict) throw err;
     // fall through to the JSON store
   }
   // 2) Local JSON store.
