@@ -119,7 +119,7 @@ async function waitReady() {
 
 try {
   leg("production server boots", await waitReady(), BASE);
-  leg("storefront starts on the default palette", (await storefrontPalette()) === "maison-classic");
+  leg("storefront starts on the default palette", (await storefrontPalette()) === "astralium-noir");
 
   // ── Customer team ──────────────────────────────────────────────────────────
   const hello = await streamChat({ message: "Hello! What do you sell?", locale: "en" });
@@ -165,7 +165,7 @@ try {
     themeTurn.json?.ok === true && themeAction?.toolName === "set_theme" && themeAction?.status === "preview"
       && themeTurn.json?.employeeId === "designer",
     JSON.stringify(themeTurn.json ?? {}).slice(0, 200));
-  leg("storefront palette UNCHANGED before Apply", (await storefrontPalette()) === "maison-classic");
+  leg("storefront palette UNCHANGED before Apply", (await storefrontPalette()) === "astralium-noir");
   const applied = await jfetch(owner, `${BASE}/api/admin/ai/actions`, {
     method: "POST", body: { actionId: themeAction.id, decision: "apply" },
   });
@@ -175,7 +175,7 @@ try {
     method: "POST", body: { actionId: themeAction.id, decision: "undo" },
   });
   leg("owner Undo succeeds", undone.json?.ok === true && undone.json?.action?.status === "undone");
-  leg("storefront palette restored after Undo", (await storefrontPalette()) === "maison-classic");
+  leg("storefront palette restored after Undo", (await storefrontPalette()) === "astralium-noir");
 
   // ── Owner chat: coupon approval gate ───────────────────────────────────────
   const couponTurn = await jfetch(owner, `${BASE}/api/admin/ai/chat`, {
