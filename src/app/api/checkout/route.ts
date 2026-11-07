@@ -29,6 +29,7 @@ import { getClientCountry, getClientIp, httpErrorResponse, readJsonBody } from "
 // on-page JS SDK flow build identical orders.
 import { normalizeCheckoutEmail } from "../../../lib/checkout-rules";
 import { buildPaypalOrderBody, createPaypalOrder, getPaypalAccessToken, paypalConfigured } from "../../../lib/paypal";
+import { rateLimiters, tooManyRequests } from "../../../lib/ratelimit";
 
 export const runtime = "nodejs";
 
@@ -46,6 +47,11 @@ const REQUIRED_ENV = [
  * PAYMENTS_NOT_CONFIGURED. It never fabricates a payment.
  */
 export async function POST(req: NextRequest) {
+  // Anonymous order creation is rate-limited per IP (as the capture
+  // route already was): unbounded creation burns PayPal API quota and
+  // fills the ledger with junk PENDING rows.
+  const ipCheck = rateLimiters.publicPostIp.check(`ip:${getClientIp(req)}`);
+  if (!ipCheck.allowed) return tooManyRequests(ipCheck);
   let body: {
     items?: CartRef[];
     email?: string;
@@ -71,6 +77,11 @@ export async function POST(req: NextRequest) {
   if (!body || !Array.isArray(body.items) || body.items.length === 0) {
     return NextResponse.json({ error: "EMPTY_CART" }, { status: 400 });
   }
+  // One licence per product: duplicate ids in a payload are charged
+  // once (the honest client already dedupes; the API must not rely on
+  // that — a duplicated id used to be charged per occurrence while
+  // granting once).
+  body.items = [...new Map(body.items.map((i) => [i.id, i])).values()];
   // Email is OPTIONAL (owner fix, 2026-11): blank is fine — the book
   // is delivered on the success page; a typed email is used only for
   // the receipt/backup copy and must be well-formed. For PayPal, the
@@ -114,7 +125,10 @@ export async function POST(req: NextRequest) {
     if (!parsed.ok) {
       return NextResponse.json({ error: "INVALID_PHONE" }, { status: 400 });
     }
-    await recordConsent({ subject: parsed.e164, channel: "whatsapp", granted: true });
+    // Consent recording is bookkeeping: a PII-store failure must not
+    // 500 an otherwise valid checkout (the hash below still travels).
+    await recordConsent({ subject: parsed.e164, channel: "whatsapp", granted: true })
+      .catch((err) => console.log(JSON.stringify({ event: "consent.record-failed", orderId, error: String(err) })));
     deliverySubjectHash = createHash("sha256").update(parsed.e164).digest("hex");
   }
 
@@ -132,6 +146,7 @@ export async function POST(req: NextRequest) {
   const lineItems: { title: string; amountUSD: number }[] = [];
   const lineProductIds: (string | null)[] = []; // aligned with lineItems (null = bundle line)
   let subtotal = 0;
+  const unavailableIds: string[] = [];
   for (const ref of body.items) {
     const product = catalogById.get(ref.id);
     if (product) {
@@ -150,7 +165,15 @@ export async function POST(req: NextRequest) {
       subtotal += bundle.priceUSD;
       continue;
     }
-    return NextResponse.json({ error: `UNKNOWN_ITEM:${ref.id}` }, { status: 400 });
+    unavailableIds.push(ref.id);
+  }
+  // An item that no longer resolves (deactivated/deleted since it was
+  // added to the buyer's on-device cart) is NOT a payment failure: it
+  // gets its own structured answer so the client can prune the cart
+  // and tell the buyer plainly what happened, instead of the generic
+  // "payment could not be completed" dead end.
+  if (unavailableIds.length > 0) {
+    return NextResponse.json({ error: "ITEM_UNAVAILABLE", items: unavailableIds }, { status: 409 });
   }
 
   // Phase 4 price layer — applied to standalone product lines BEFORE any
@@ -221,7 +244,7 @@ export async function POST(req: NextRequest) {
       if (!standaloneIds.includes(gift.productId)) {
         return NextResponse.json({ error: `GIFT_PRODUCT_NOT_IN_CART:${gift.productId}` }, { status: 400 });
       }
-      const check = validateGiftInput(gift);
+      const check = validateGiftInput(gift, new Set(catalogById.keys()));
       if (!check.ok) {
         return NextResponse.json({ error: `GIFT_${check.error}` }, { status: 400 });
       }
@@ -283,8 +306,15 @@ export async function POST(req: NextRequest) {
   // download route enforce it) until the owner reviews. Review-only —
   // the buyer is never told and nothing is auto-refunded.
   if (fraudOn && email) {
-    const assessment = await assessCheckout({ orderId, email, ip: clientIp, amountUSD: total });
-    if (!assessment.blocked && assessment.held) {
+    // Risk scoring is advisory: if the fraud subsystem itself fails,
+    // the money path stays available and the failure is logged —
+    // an uncaught throw here used to 500 valid checkouts.
+    const assessment = await assessCheckout({ orderId, email, ip: clientIp, amountUSD: total })
+      .catch((err) => {
+        console.log(JSON.stringify({ event: "fraud.assess-failed", orderId, error: String(err) }));
+        return null;
+      });
+    if (assessment && !assessment.blocked && assessment.held) {
       console.log(JSON.stringify({ event: "fraud.hold", orderId, score: assessment.score, reasons: assessment.reasons }));
     }
   }
@@ -308,7 +338,12 @@ export async function POST(req: NextRequest) {
     }
   };
 
-  const provider = body.provider === "paypal" ? "paypal" : "stripe";
+  // An explicit provider choice is honoured; an absent/unknown one
+  // defaults to whichever provider is actually configured, instead of
+  // dead-ending at PAYMENTS_NOT_CONFIGURED while the other works.
+  const provider = body.provider === "paypal" || body.provider === "stripe"
+    ? body.provider
+    : paypalConfigured() ? "paypal" : "stripe";
   const base = siteUrl();
 
   if (provider === "stripe" && process.env.STRIPE_SECRET_KEY) {
@@ -357,6 +392,11 @@ export async function POST(req: NextRequest) {
       if (cRes.ok) {
         const c = (await cRes.json()) as { id: string };
         form.set("discounts[0][coupon]", c.id);
+      } else {
+        // Never charge the full amount while every number the buyer
+        // saw (and the order record) says the discounted total.
+        console.log(JSON.stringify({ event: "stripe.coupon-create-failed", orderId, status: cRes.status }));
+        return NextResponse.json({ error: "DISCOUNT_APPLY_FAILED" }, { status: 502 });
       }
     }
     void total;
@@ -371,18 +411,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: session.error?.message ?? "STRIPE_ERROR" }, { status: 502 });
     }
     // Order ledger (F1): the PENDING order exists from this moment; the
-    // webhook will transition it. Ledger failure must not break checkout.
+    // webhook will transition it. The write is NOT best-effort: the
+    // capture/webhook paths require this row, so if it cannot be
+    // written the checkout fails here and the session URL is never
+    // handed out — an unrecorded session can never take money.
     if (session.id) {
-      await createPendingOrder({
-        orderId, email, provider: "stripe", providerRef: session.id,
-        items: productIds.map((pid) => ({ productId: pid, priceUSD: catalogById.get(pid)?.priceUSD ?? 0 })),
-        totalUSD: total, currency: "USD",
-        deliveryChannel, deliverySubjectHash: deliverySubjectHash ?? null,
-        country: getClientCountry(req) ?? null, locale,
-      }).catch(() => undefined);
+      try {
+        await createPendingOrder({
+          orderId, email, provider: "stripe", providerRef: session.id,
+          items: productIds.map((pid) => ({ productId: pid, priceUSD: catalogById.get(pid)?.priceUSD ?? 0 })),
+          totalUSD: total, currency: "USD",
+          deliveryChannel, deliverySubjectHash: deliverySubjectHash ?? null,
+          country: getClientCountry(req) ?? null, locale,
+        });
+      } catch (err) {
+        console.log(JSON.stringify({ event: "order.ledger-write-failed", orderId, provider: "stripe", error: String(err) }));
+        return NextResponse.json({ error: "LEDGER_WRITE_FAILED" }, { status: 502 });
+      }
     }
-    await persistOrderExtras();
-    await countFlashUnits();
+    // Bookkeeping after the session exists (loyalty commit, gifts,
+    // referral, flash counters): a failure here must never 500 a
+    // checkout whose payment session is already created — the buyer's
+    // retry would mint a duplicate session and ledger row.
+    await persistOrderExtras().catch((err) =>
+      console.log(JSON.stringify({ event: "checkout.extras-failed", orderId, error: String(err) })));
+    await countFlashUnits().catch((err) =>
+      console.log(JSON.stringify({ event: "checkout.flash-count-failed", orderId, error: String(err) })));
     return NextResponse.json({
       url: session.url, sessionId: session.id, orderId,
       pricing: {
@@ -422,15 +476,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "PAYPAL_ORDER_FAILED" }, { status: 502 });
     }
     // Order ledger (F1): PENDING order anchored on the PayPal order id.
-    await createPendingOrder({
-      orderId, email, provider: "paypal", providerRef: created.id,
-      items: productIds.map((pid) => ({ productId: pid, priceUSD: catalogById.get(pid)?.priceUSD ?? 0 })),
-      totalUSD: total, currency: "USD",
-      deliveryChannel, deliverySubjectHash: deliverySubjectHash ?? null,
-      country: getClientCountry(req) ?? null, locale,
-    }).catch(() => undefined);
-    await persistOrderExtras();
-    await countFlashUnits();
+    // NOT best-effort: capture requires this row. If it cannot be
+    // written, the PayPal order id/approve URL are never returned, so
+    // the created order can never be approved or capture money.
+    try {
+      await createPendingOrder({
+        orderId, email, provider: "paypal", providerRef: created.id,
+        items: productIds.map((pid) => ({ productId: pid, priceUSD: catalogById.get(pid)?.priceUSD ?? 0 })),
+        totalUSD: total, currency: "USD",
+        deliveryChannel, deliverySubjectHash: deliverySubjectHash ?? null,
+        country: getClientCountry(req) ?? null, locale,
+      });
+    } catch (err) {
+      console.log(JSON.stringify({ event: "order.ledger-write-failed", orderId, provider: "paypal", error: String(err) }));
+      return NextResponse.json({ error: "LEDGER_WRITE_FAILED" }, { status: 502 });
+    }
+    // Bookkeeping isolation: same rule as the Stripe branch — never
+    // 500 a checkout whose payment order already exists.
+    await persistOrderExtras().catch((err) =>
+      console.log(JSON.stringify({ event: "checkout.extras-failed", orderId, error: String(err) })));
+    await countFlashUnits().catch((err) =>
+      console.log(JSON.stringify({ event: "checkout.flash-count-failed", orderId, error: String(err) })));
     return NextResponse.json({
       url: created.approveUrl, providerOrderId: created.id, orderId,
       pricing: {
