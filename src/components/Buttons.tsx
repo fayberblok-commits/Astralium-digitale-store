@@ -2,6 +2,7 @@
 import { useRouter } from "next/navigation";
 import { useStore, type CartItem } from "../lib/store";
 import { expressCheckoutHref } from "../lib/express";
+import { warmUpPaypal } from "../lib/paypal-sdk";
 
 export function AddToCartButton({
   item,
@@ -67,18 +68,29 @@ export function ExpressPayPalButton({
   item,
   locale,
   big = false,
+  clientId,
 }: {
   item: CartItem;
   locale: string;
   big?: boolean;
+  /** Public PayPal client id (server-rendered) — enables the
+   *  payment-path warm-up on intent (speed fix, register item 81):
+   *  hovering/focusing/tapping this button preconnects to PayPal,
+   *  caches the Card Fields client token and loads the SDK, so the
+   *  checkout payment area is ready when the buyer arrives. */
+  clientId?: string | null;
 }) {
   const router = useRouter();
+  const warm = () => warmUpPaypal(clientId);
   return (
     <button
       type="button"
       dir="ltr"
       className={`btn-paypal-brand ${big ? "btn-paypal-lg" : ""}`}
+      onPointerEnter={warm}
+      onFocus={warm}
       onClick={() => {
+        warm();
         try {
           sessionStorage.setItem("astralium-provider", "paypal");
         } catch { /* preference is best-effort */ }
