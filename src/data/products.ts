@@ -407,7 +407,7 @@ export const TESTIMONIALS: Testimonial[] = [
 
 export const FAQS: { q: string; a: string }[] = [
   { q: "How do I receive my products?", a: "Instantly. The moment payment is confirmed you get download buttons on the success page and a signed download link by email. Links are personal, time-limited and can be re-issued any time from your account page." },
-  { q: "What payment methods do you accept?", a: "Cards, Apple Pay, Google Pay, Link and local methods via Stripe, plus PayPal where available. The fastest methods for your country and device are shown first at checkout." },
+  { q: "What payment methods do you accept?", a: "Bank cards and PayPal. Pay by card securely through PayPal right here in the store — no PayPal account needed — or pay with your PayPal balance. Your download is delivered instantly the moment payment is confirmed." },
   { q: "What is your refund policy?", a: "14-day money-back guarantee on every product, no questions asked. One click from your account or a single email to support — refunds also revoke download access." },
   { q: "Can I re-download later?", a: "Yes. Your account keeps a permanent re-download centre for everything you bought (unless a product page states otherwise). Download links are re-issued securely on request." },
   { q: "Do prices include taxes?", a: "Prices are shown in your currency. Applicable VAT/GST/sales tax for digital goods is calculated and shown clearly before you pay — never as a surprise afterwards." },
