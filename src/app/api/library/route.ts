@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../lib/flags";
-import { buildLibraryEntries, ordersForEmailDb, localOrdersToInputs, versionMapFor, type LibraryOrderInput } from "../../../lib/library";
+import { buildLibraryEntries, verifiedLibraryOrders, ledgerOrderToLibraryInput, versionMapFor, type LibraryOrderInput } from "../../../lib/library";
 import { listAdminProducts } from "../../../lib/catalog";
 import { getLoyaltyBalance } from "../../../lib/loyalty";
 import { httpErrorResponse, readJsonBody } from "../../../lib/http";
@@ -10,13 +10,17 @@ export const runtime = "nodejs";
 /**
  * My Library (Phase 3, feature 1).
  *
- * Two ownership-checked sources, never mixed:
- *  - DB mode: ?email= returns ONLY orders whose stored email matches —
- *    the email is in the SQL WHERE clause (see ordersForEmailDb).
- *  - Device mode: the browser posts back its own local order records;
- *    entries are built from exactly those records (the same trust model
- *    as the existing account page) and downloads re-mint fresh signed
- *    tokens through the existing grant flow.
+ * Ownership model (delivery-audit findings 71/72 — the previous
+ * version trusted client claims and minted real download tokens for
+ * wholly fabricated order records; that side door is closed):
+ * entries are built ONLY from ledger orders the server holds as
+ * paid/fulfilled, admitted through verifiedLibraryOrders. Admission
+ * requires the unguessable provider reference (PayPal order id /
+ * Stripe session id) from the buyer's own device records — the same
+ * capability the success page verifies. A claimed status, a claimed
+ * item list, or an email address alone admits nothing, and every
+ * download URL handed out is the order's ledger GRANT token
+ * (counted, capped, revocable) — never a freshly minted claim token.
  */
 export async function POST(req: NextRequest) {
   if (!(await getFlag("library"))) {
@@ -24,7 +28,7 @@ export async function POST(req: NextRequest) {
   }
   let body: {
     email?: string;
-    localOrders?: { orderId: string; createdAt: string; status: string; items: { id: string; productIds?: string[] }[] }[];
+    localOrders?: { orderId: string; providerRef?: string; createdAt: string; status: string; items: { id: string; productIds?: string[] }[] }[];
   } | null;
   try {
     body = await readJsonBody(req);
@@ -37,22 +41,20 @@ export async function POST(req: NextRequest) {
   //  what they paid for). The seed list alone dropped the real books.
   const { products: catalogAll } = await listAdminProducts();
   const catalogById = new Map(catalogAll.map((p) => [p.id, p]));
-  const catalogIds = new Set(catalogById.keys());
+  const presented = Array.isArray(body?.localOrders) ? body.localOrders.slice(0, 50) : [];
 
-  let orders: LibraryOrderInput[] = [];
-  let source: "db" | "device" = "device";
-  if (body?.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
-    const dbOrders = await ordersForEmailDb(body.email);
-    if (dbOrders !== null) {
-      orders = dbOrders;
-      source = "db";
-    }
-  }
-  if (source === "device" && Array.isArray(body?.localOrders)) {
-    orders = localOrdersToInputs(body.localOrders.slice(0, 50), catalogIds);
-  }
+  const verified = await verifiedLibraryOrders({ email: body?.email, records: presented });
+  const orders: LibraryOrderInput[] = verified.orders.map(ledgerOrderToLibraryInput);
+  const emailLc = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+  const source: "db" | "device" =
+    emailLc && verified.orders.some((o) => o.email.trim().toLowerCase() === emailLc) ? "db" : "device";
   const versions = await versionMapFor(orders);
-  const entries = buildLibraryEntries(orders, versions, undefined, catalogById);
+  const entries = buildLibraryEntries(
+    orders,
+    versions,
+    (pid, oid) => verified.tokens.get(`${oid}:${pid}`) ?? null,
+    catalogById,
+  );
   // Phase 4, feature 11: loyalty balance rides along when the customer
   // identified themselves with an email and the flag is on.
   let loyalty: { balance: number; tier: string } | null = null;
