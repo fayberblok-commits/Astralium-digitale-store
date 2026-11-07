@@ -5,13 +5,21 @@
  * the feature flag is off (403) or nothing is recommended. View history
  * stays on-device: slugs from localStorage are sent as ids only — the
  * aggregator never receives identity data.
+ *
+ * The rail renders ONLY the product objects carried in the API payload
+ * (register item 82 fix): it holds no local product list, so nothing
+ * the server did not send can ever be displayed here.
  */
 import { useEffect, useState } from "react";
 import type { Dict } from "../i18n/dictionaries";
-import { getProductById } from "../data/products";
+import type { Product } from "../data/products";
 import ProductCard from "./ProductCard";
 
-interface RecoItem { id: string; reason: "also_bought" | "similar_category" | "top_rated" }
+interface RecoItem {
+  id: string;
+  reason: "also_bought" | "similar_category" | "top_rated";
+  product: Product;
+}
 
 export default function RecommendationsRail({
   locale,
@@ -41,7 +49,9 @@ export default function RecommendationsRail({
         const res = await fetch(`/api/recommendations?${qs.toString()}`);
         if (!res.ok) return; // flag off / error → rail stays hidden
         const data = (await res.json()) as { recommendations: RecoItem[] };
-        setItems(data.recommendations ?? []);
+        // Payload-only rendering: an item without its server-sent
+        // product object is dropped, never resolved locally.
+        setItems((data.recommendations ?? []).filter((i) => i && i.product && i.product.id === i.id));
       } catch { /* hidden */ }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -54,16 +64,12 @@ export default function RecommendationsRail({
     <section className="section">
       <h2>{dict.reco_t}</h2>
       <div className="grid">
-        {items.map((item) => {
-          const p = getProductById(item.id);
-          if (!p) return null;
-          return (
-            <div key={item.id}>
-              <ProductCard product={p} locale={locale} dict={dict} currency={currency} />
-              <p className="muted" style={{ marginTop: 6 }}>{reasonLabel(item.reason)}</p>
-            </div>
-          );
-        })}
+        {items.map((item) => (
+          <div key={item.id}>
+            <ProductCard product={item.product} locale={locale} dict={dict} currency={currency} />
+            <p className="muted" style={{ marginTop: 6 }}>{reasonLabel(item.reason)}</p>
+          </div>
+        ))}
       </div>
     </section>
   );
