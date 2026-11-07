@@ -1,6 +1,6 @@
 import { STRIPE_API_VERSION } from "../../../../lib/stripe";
 import { NextRequest, NextResponse } from "next/server";
-import { getProductById } from "../../../../data/products";
+import { getStorefrontProductById } from "../../../../lib/catalog";
 import { getFlag } from "../../../../lib/flags";
 import { siteUrl } from "../../../../lib/server";
 import {
@@ -43,7 +43,9 @@ export async function POST(req: NextRequest) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return NextResponse.json({ error: "INVALID_EMAIL" }, { status: 400 });
   }
-  const product = body?.productId ? getProductById(body.productId) : undefined;
+  // Resolved from the real (DB-first) catalog — the seed list alone
+  // made every office-created product unsubscribable (thermal fix).
+  const product = body?.productId ? await getStorefrontProductById(body.productId) : null;
   if (!product) return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 404 });
   const plans = await getPlanConfig();
   const plan = plans[product.id];
