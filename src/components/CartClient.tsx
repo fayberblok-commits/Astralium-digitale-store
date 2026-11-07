@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Dict } from "../i18n/dictionaries";
 import { useStore } from "../lib/store";
 import { formatPrice } from "../lib/currency";
@@ -11,14 +11,21 @@ import Cover from "./Cover";
 import RecommendationsRail from "./RecommendationsRail";
 
 export default function CartClient({ locale, dict, currency }: { locale: string; dict: Dict; currency: string }) {
-  const { cart, remove, subtotal } = useStore();
+  const { cart, remove, subtotal, prunedTitles, dismissPruned, syncCartWithCatalog } = useStore();
   const [code, setCode] = useState("");
   const [discount, setDiscount] = useState(0);
   const [couponMsg, setCouponMsg] = useState<"ok" | "bad" | null>(null);
+  // Thermal fix: reconcile the on-device cart snapshot with the live
+  // catalog on mount — dead items are pruned with a notice below,
+  // prices/titles refreshed — instead of dying at the payment button.
+  useEffect(() => { void syncCartWithCatalog(); }, [syncCartWithCatalog]);
   // Build-your-own bundle (feature 3): display estimate — the checkout
-  // route re-validates the same rule server-side before charging.
+  // route re-validates the same rule server-side before charging. The
+  // priced catalog for the estimate is the (catalog-synced) cart
+  // itself: the seed list knows nothing about office-created books,
+  // so counting against it hid the discount the server will apply.
   const standaloneIds = cart.filter((i) => i.kind === "product").map((i) => i.id);
-  const byo = byoDiscount(standaloneIds, PRODUCTS);
+  const byo = byoDiscount(standaloneIds, cart);
   const totals = priceCart(subtotal, discount + byo.discountUSD);
 
   async function applyCoupon() {
@@ -43,17 +50,31 @@ export default function CartClient({ locale, dict, currency }: { locale: string;
     }
   }
 
+  const prunedNotice = prunedTitles.length > 0 ? (
+    <div className="panel" style={{ marginTop: 28 }} role="status">
+      <p style={{ margin: 0 }}>
+        <strong>{dict.item_removed_notice}</strong>{" "}
+        {prunedTitles.join(" · ")}{" "}
+        <button type="button" className="btn btn-ghost" onClick={dismissPruned} aria-label="✕">✕</button>
+      </p>
+    </div>
+  ) : null;
+
   if (cart.length === 0) {
     return (
-      <div className="panel" style={{ marginTop: 28, textAlign: "center" }}>
-        <p>{dict.cart_empty}</p>
-        <Link href={`/${locale}/shop`} className="btn btn-primary">{dict.continue_shopping}</Link>
-      </div>
+      <>
+        {prunedNotice}
+        <div className="panel" style={{ marginTop: 28, textAlign: "center" }}>
+          <p>{dict.cart_empty}</p>
+          <Link href={`/${locale}/shop`} className="btn btn-primary">{dict.continue_shopping}</Link>
+        </div>
+      </>
     );
   }
 
   return (
     <div className="two-col">
+      {prunedNotice && <div style={{ gridColumn: "1 / -1" }}>{prunedNotice}</div>}
       <div className="panel">
         {cart.map((item) => (
           <div key={item.id} className="cart-line">
