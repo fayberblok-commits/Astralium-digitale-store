@@ -17,9 +17,10 @@ import ProductCard, { Stars } from "../../components/ProductCard";
 import Cover from "../../components/Cover";
 import HeroScene, { HeroStats } from "../../components/HeroScene";
 import Marquee from "../../components/Marquee";
+import WordsTicker from "../../components/WordsTicker";
 import ScrollReveal from "../../components/ScrollReveal";
 import NewsletterForm from "../../components/NewsletterForm";
-import { AddToCartButton, ExpressPayPalButton } from "../../components/Buttons";
+import { AddToCartButton, ExpressBuyButton, ExpressPayPalButton } from "../../components/Buttons";
 import SocialProof from "../../components/SocialProof";
 import AbBeacon from "../../components/AbBeacon";
 import { cookies } from "next/headers";
@@ -57,6 +58,10 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
   const bestsellers = PRODUCTS.filter((p) => p.badge === "bestseller");
   const newReleases = [...PRODUCTS].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)).slice(0, 4);
   const hero = PRODUCTS[0];
+  // Wide big page (approved mockup v2): the mini cover floating over
+  // the hero art is the Designs book — the gallery's most luxurious.
+  const designsBook =
+    PRODUCTS.find((p) => p.id === "p-4-luxury-classic-garment-designs") ?? hero;
   // 2026-11 redesign: the featured band's product — first bestseller,
   // else the catalog's lead product (real catalog data, as before).
   const featured = bestsellers[0] ?? hero;
@@ -111,7 +116,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
             />
           </div>
           <div className="hero-art" aria-hidden="true">
-            <div className="hero-arch">
+            <div className="hero-arch cycle-line">
               {/* Owner-approved artwork (2026-11): generated for the
                   redesign, shipped in public/brand. Decorative — the
                   adjacent copy carries all meaning. Plain <img> by
@@ -121,10 +126,13 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
               <img src={HERO_ART_DATA_URI} alt="" width={859} height={1000} />
             </div>
             <div className="hero-mini-cover">
-              <Cover title={hero.title} category={hero.category} hue={hero.hue} size="sm" />
+              <Cover title={designsBook.title} category={designsBook.category} hue={designsBook.hue} size="sm" id={designsBook.id} />
             </div>
           </div>
         </div>
+        {/* The moving-words band — signature of the approved design,
+            scrolling between the hero and the books (wide mockup v2). */}
+        <WordsTicker />
       </section>
     ),
     trust: (
@@ -160,7 +168,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
         </div>
         <article className="feat-band cycle-line">
           <Link href={`/${locale}/product/${featured.slug}`} className="feat-cover" aria-label={featured.title}>
-            <Cover title={featured.title} category={featured.category} hue={featured.hue} size="lg" />
+            <Cover title={featured.title} category={featured.category} hue={featured.hue} size="lg" id={featured.id} />
           </Link>
           <div className="feat-mid">
             <h3>{featured.title}</h3>
@@ -196,6 +204,25 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
             )}
           </div>
         </article>
+        {/* Wide big page: the payment band from the approved mockup —
+            total, the glowing emerald PAY button (express checkout
+            for the featured book), and the secure-payment note. */}
+        <div className="pay-band">
+          <div className="pay-band-total">
+            <small>{dict.checkout_t} · {dict.cart_total}</small>
+            <strong>{formatPrice(featured.priceUSD, currency, locale)}</strong>
+          </div>
+          <ExpressBuyButton
+            item={{
+              id: featured.id, kind: "product", slug: featured.slug,
+              title: featured.title, priceUSD: featured.priceUSD, hue: featured.hue,
+            }}
+            locale={locale}
+            label={dict.pay_now}
+            className="btn btn-pay btn-lg"
+          />
+          <p className="pay-band-note">🔒 {dict.checkout_secure_note}</p>
+        </div>
         <h2 className="feat-grid-title">{dict.sec_bestsellers}</h2>
         <div className="grid">
           {bestsellers.map((p) => (
@@ -322,6 +349,11 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
 
   return (
     <>
+      {/* Wide big page: the LED page frame + side strips (decorative,
+          fixed, pointer-events disabled — see globals.css). */}
+      <div className="led-page-frame" aria-hidden="true" />
+      <div className="led-strip led-strip-l" aria-hidden="true" />
+      <div className="led-strip led-strip-r" aria-hidden="true" />
       {visible.map((id) => (
         <div key={id} data-home-section={id} style={{ display: "contents" }}>
           {sections[id]}
