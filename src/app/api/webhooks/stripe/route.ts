@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createDownloadToken } from "../../../../lib/tokens";
 import { findSubjectByHash } from "../../../../lib/pii";
 import { deliverOrder } from "../../../../services/delivery";
 import { sendEmail, receiptEmailHtml } from "../../../../services/email";
@@ -20,7 +19,7 @@ import { issueLicenseKeysForOrder, licenseKeysEmailHtml, type IssuedKey } from "
 // PAID only from PENDING, refunds/disputes revoke grants, and a
 // payment-intent → order link store lets charge-level events
 // (refund/dispute) find their order.
-import { applyDispute, applyRefund, markPaidAndGrant, transitionOrder } from "../../../../lib/orders";
+import { applyDispute, applyRefund, grantTokensForOrder, markPaidAndGrant, transitionOrder } from "../../../../lib/orders";
 import { getJsonConfig, setJsonConfig } from "../../../../lib/config-store";
 import { recordSecurityEvent } from "../../../../lib/security-log";
 import { verifyStripeWebhookSignature } from "../../../../lib/stripe";
@@ -207,7 +206,11 @@ export async function POST(req: NextRequest) {
     if (typeof session["payment_intent"] === "string" && session["payment_intent"]) {
       await linkPaymentIntent(session["payment_intent"], orderId);
     }
-    const grantTokens = new Map(ledger.grants.map((g) => [g.productId, g.token]));
+    // Finding 74: links carry the order's GRANT tokens only —
+    // grantTokensForOrder re-derives the full live set (issued +
+    // pre-existing), so duplicates also deliver governed links and
+    // the old grant-less fallback token is gone.
+    const grantTokens = await grantTokensForOrder(ledger.order);
     // Phase 5, feature 19: a HELD order (fraud shield) is paid but NOT
     // fulfilled — no gifts, no links, no license keys, no loyalty earn —
     // until the owner releases the hold in admin (the release re-issues
@@ -233,12 +236,15 @@ export async function POST(req: NextRequest) {
     const links = buyerProductIds
       .map((pid) => getProductById(pid))
       .filter((p): p is NonNullable<typeof p> => Boolean(p))
-      .map((p) => ({
-        title: p.title,
-        // Prefer the ledger grant token (counted + revocable); a fresh
-        // stateless token is the fallback for duplicate deliveries.
-        downloadUrl: `${siteUrl()}/api/download/${grantTokens.get(p.id) ?? createDownloadToken(p.id, orderId)}`,
-      }));
+      .flatMap((p) => {
+        const token = grantTokens.get(p.id);
+        if (!token) {
+          console.log(JSON.stringify({ event: "order.fulfil.no-grant-token", orderId, productId: p.id, via: "stripe-webhook" }));
+          return [];
+        }
+        // The ledger grant token: counted + revocable (finding 74).
+        return [{ title: p.title, downloadUrl: `${siteUrl()}/api/download/${token}` }];
+      });
     // Phase 4, features 11+12: loyalty earn on the completed order and
     // the referral flip to "earned" — both idempotent per order, so a
     // webhook retry can never double-apply either. (amountTotalUSD is
