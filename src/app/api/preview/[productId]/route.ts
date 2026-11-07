@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getProductById } from "../../../../data/products";
+import { getStorefrontProductById } from "../../../../lib/catalog";
 import { getBinding } from "../../../../lib/bindings";
 import { getFlag } from "../../../../lib/flags";
 import { headObject, isStorageConfigured, presignGet } from "../../../../services/storage";
@@ -24,7 +24,7 @@ export async function GET(
     return NextResponse.json({ error: "FEATURE_DISABLED" }, { status: 403 });
   }
   const { productId } = await params;
-  const product = getProductById(productId);
+  const product = await getStorefrontProductById(productId);
   if (!product) {
     return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 404 });
   }
