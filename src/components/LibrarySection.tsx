@@ -1,9 +1,11 @@
 "use client";
 /**
  * My Library (Phase 3, feature 1): posts the device's own order records
- * to /api/library, which re-mints fresh signed download tokens and
- * computes version/update state server-side. Hides when the library
- * flag is off (403).
+ * to /api/library. The records' providerRef (the PayPal/Stripe
+ * reference only the buyer's own flow ever shows them) is the
+ * ownership capability the server re-verifies against the ledger
+ * before it hands back grant-backed download links — the records'
+ * claimed status/items alone authorize nothing.
  */
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -38,7 +40,7 @@ export default function LibrarySection({ locale, dict }: { locale: string; dict:
           body: JSON.stringify({
             email: orders[0]?.email,
             localOrders: orders.map((o) => ({
-              orderId: o.orderId, createdAt: o.createdAt, status: o.status,
+              orderId: o.orderId, providerRef: o.providerRef, createdAt: o.createdAt, status: o.status,
               items: o.items.map((i) => ({ id: i.id, productIds: i.productIds })),
             })),
           }),
