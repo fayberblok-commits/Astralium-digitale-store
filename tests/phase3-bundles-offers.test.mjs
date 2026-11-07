@@ -58,16 +58,16 @@ test("stored bundles persist via the .data fallback and drive the storefront", a
 
 test("order bump math: server config decides price; unconfigured/duplicate requests rejected", () => {
   const config = { p01: { bump: { productId: "p02", discountPercent: 25 } } };
-  const lines = resolveBumps(["p01"], ["p02"], config);
+  const lines = resolveBumps(["p01"], ["p02"], config, PRODUCTS);
   assert.equal(lines.length, 1);
   assert.equal(lines[0].priceUSD, Math.round(79 * 0.75 * 100) / 100);
   assert.equal(lines[0].fullPriceUSD, 79);
   // Not configured for this cart → nothing, even if the client asks.
-  assert.deepEqual(resolveBumps(["p01"], ["p03"], config), []);
+  assert.deepEqual(resolveBumps(["p01"], ["p03"], config, PRODUCTS), []);
   // Already in the cart → never double-sold.
-  assert.deepEqual(resolveBumps(["p01", "p02"], ["p02"], config), []);
+  assert.deepEqual(resolveBumps(["p01", "p02"], ["p02"], config, PRODUCTS), []);
   // No config at all → nothing.
-  assert.deepEqual(resolveBumps(["p01"], ["p02"], {}), []);
+  assert.deepEqual(resolveBumps(["p01"], ["p02"], {}, PRODUCTS), []);
   assert.equal(discountedPrice(getProductById("p02"), 25), 59.25);
 });
 
