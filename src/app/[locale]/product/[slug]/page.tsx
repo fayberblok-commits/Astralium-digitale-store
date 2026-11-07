@@ -20,6 +20,7 @@ import ReviewsSection from "../../../../components/ReviewsSection";
 import RecordView from "../../../../components/RecordView";
 import ProductCommerce from "../../../../components/ProductCommerce";
 import { isAudioProduct } from "../../../../lib/preview";
+import { paypalClientId } from "../../../../lib/paypal";
 import { getFlag } from "../../../../lib/flags";
 import { aggregateReviews, listReviews } from "../../../../lib/reviews";
 import { buildBreadcrumbJsonLd, buildProductJsonLd } from "../../../../lib/seo";
@@ -150,7 +151,7 @@ export default async function ProductPage({
             />
             {paypalConfigured && (
               <div style={{ marginTop: 10 }}>
-                <ExpressPayPalButton item={cartItem} locale={locale} big />
+                <ExpressPayPalButton item={cartItem} locale={locale} big clientId={paypalClientId()} />
               </div>
             )}
             <p className="muted">{dict.free_returns_note}</p>
