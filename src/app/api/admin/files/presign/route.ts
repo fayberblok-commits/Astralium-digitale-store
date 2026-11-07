@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "../../../../../lib/team";
-import { getProductById } from "../../../../../data/products";
+import { listAdminProducts } from "../../../../../lib/catalog";
 import { ALLOWED_EXTENSIONS, MAX_DECLARED_BYTES, sanitizeFilename } from "../../../../../lib/uploads";
 import {
   isStorageConfigured,
@@ -37,7 +37,10 @@ export async function POST(req: NextRequest) {
   if (!body?.productId || !body?.filename || (body.kind !== "product" && body.kind !== "preview")) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
-  const product = getProductById(body.productId);
+  // Resolve through the real catalog (DB source of truth, incl. inactive
+  // products) — the seed list alone misses office-created products.
+  const { products } = await listAdminProducts();
+  const product = products.find((p) => p.id === body.productId);
   if (!product) {
     return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 404 });
   }
