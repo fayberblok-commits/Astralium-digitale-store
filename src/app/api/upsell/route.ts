@@ -2,7 +2,7 @@ import { STRIPE_API_VERSION } from "../../../lib/stripe";
 import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../lib/flags";
 import { getOfferConfig, buildUpsellCheckoutParams } from "../../../lib/offers";
-import { getProductById } from "../../../data/products";
+import { getStorefrontProductById } from "../../../lib/catalog";
 import { siteUrl } from "../../../lib/server";
 import { httpErrorResponse, readJsonBody } from "../../../lib/http";
 
@@ -38,7 +38,8 @@ export async function POST(req: NextRequest) {
   if (!slot) {
     return NextResponse.json({ error: "NO_UPSELL_CONFIGURED" }, { status: 404 });
   }
-  const product = getProductById(slot.productId);
+  // The upsell product must be on sale NOW (live catalog — item 82 fix).
+  const product = await getStorefrontProductById(slot.productId);
   if (!product) {
     return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 404 });
   }
