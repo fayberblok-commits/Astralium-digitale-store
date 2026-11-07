@@ -7,6 +7,7 @@ import { getStorefrontProductById, getStorefrontProducts } from "../../../lib/ca
 import { resolveBundle } from "../../../lib/bundles";
 import { parseExpressId } from "../../../lib/express";
 import { getPaypalClientToken, paypalClientId } from "../../../lib/paypal";
+import { paypalSdkUrl } from "../../../lib/paypal-sdk";
 import type { CartItem } from "../../../lib/store";
 import CheckoutClient from "../../../components/CheckoutClient";
 
@@ -55,6 +56,7 @@ export default async function CheckoutPage({
   // token. Minted here so the page ships it ready; ANY failure yields
   // null and the SDK simply loads without it (Smart Buttons only).
   const paypalClientToken = features.paypalConfigured ? await getPaypalClientToken() : null;
+  const ppClientId = features.paypalConfigured ? paypalClientId() : null;
   // Express intent (owner fix, 2026-11): BUY NOW routes here with
   // ?express=<id>; the checkout then contains ONLY that item and the
   // cart is never read into it. Resolved with the SAME catalog/bundle
@@ -86,6 +88,21 @@ export default async function CheckoutPage({
   }
   return (
     <>
+      {/* Speed fix (register item 81): warm the PayPal network path
+          and start the SDK download DURING parsing — the script tag
+          below is the exact one PayPalSdk would inject after
+          hydration (same URL builder; the client loader adopts this
+          tag instead of downloading twice). The server-minted client
+          token rides on it, so Card Fields are ready with it. Any
+          failure degrades exactly as before (Buttons/fallback). */}
+      {ppClientId && (
+        <>
+          <link rel="preconnect" href="https://www.paypal.com" crossOrigin="anonymous" />
+          <link rel="preconnect" href="https://www.paypalobjects.com" crossOrigin="anonymous" />
+          <link rel="dns-prefetch" href="https://www.paypal.com" />
+          <script async src={paypalSdkUrl(ppClientId)} data-client-token={paypalClientToken ?? undefined} />
+        </>
+      )}
       {/* 2026-11 redesign: the mockups' centred checkout title with
           its "last step" eyebrow. */}
       <p className="eyebrow lux-kicker"><span className="gem" aria-hidden="true">✦</span> {dict.checkout_kicker}</p>
@@ -97,7 +114,7 @@ export default async function CheckoutPage({
         channels={channels}
         features={features}
         flashPrices={flashPrices}
-        paypalClientId={features.paypalConfigured ? paypalClientId() : null}
+        paypalClientId={ppClientId}
         paypalClientToken={paypalClientToken}
         expressItem={expressItem}
       />
