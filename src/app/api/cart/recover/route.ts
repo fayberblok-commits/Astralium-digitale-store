@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../../lib/flags";
 import { markSnapshotRecovered, resolveRecoveryToken } from "../../../../lib/email-automation";
-import { getProductById } from "../../../../data/products";
+import { getStorefrontProducts } from "../../../../lib/catalog";
 import { httpErrorResponse, readJsonBody } from "../../../../lib/http";
 
 export const runtime = "nodejs";
@@ -24,8 +24,12 @@ export async function POST(req: NextRequest) {
   if (!body?.token) return NextResponse.json({ error: "TOKEN_REQUIRED" }, { status: 400 });
   const snapshot = await resolveRecoveryToken(body.token);
   if (!snapshot) return NextResponse.json({ error: "INVALID_OR_EXPIRED_LINK" }, { status: 403 });
+  // Recovered items resolve against the LIVE storefront catalog
+  // (register item 82 fix): a snapshot item whose product is no longer
+  // on sale is dropped — the recovered cart holds only buyable items.
+  const byId = new Map((await getStorefrontProducts()).map((p) => [p.id, p]));
   const items = snapshot.items
-    .map((i) => getProductById(i.productId))
+    .map((i) => byId.get(i.productId))
     .filter((p): p is NonNullable<typeof p> => Boolean(p))
     .map((p) => ({
       id: p.id, kind: "product" as const, slug: p.slug, title: p.title,
