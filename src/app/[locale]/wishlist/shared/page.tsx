@@ -4,6 +4,7 @@ import { isLocale } from "../../../../i18n/locales";
 import { currentCurrency } from "../../../../lib/server";
 import { formatPrice } from "../../../../lib/currency";
 import { parseShareItems } from "../../../../lib/share";
+import { getStorefrontProducts } from "../../../../lib/catalog";
 import Cover from "../../../../components/Cover";
 import Link from "next/link";
 
@@ -26,7 +27,7 @@ export default async function SharedWishlistPage({
   const sp = await searchParams;
   const dict = getDictionary(locale);
   const currency = await currentCurrency(locale);
-  const products = parseShareItems(sp.items);
+  const products = parseShareItems(sp.items, await getStorefrontProducts(locale));
 
   return (
     <>
