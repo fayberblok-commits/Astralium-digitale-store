@@ -6,11 +6,11 @@ import { useStore } from "../lib/store";
 import { formatPrice } from "../lib/currency";
 import { priceCart } from "../lib/coupons";
 import { byoDiscount, BYO_MIN_ITEMS } from "../lib/byo";
-import { PRODUCTS } from "../data/products";
+import type { Product } from "../data/products";
 import Cover from "./Cover";
 import RecommendationsRail from "./RecommendationsRail";
 
-export default function CartClient({ locale, dict, currency }: { locale: string; dict: Dict; currency: string }) {
+export default function CartClient({ locale, dict, currency, products }: { locale: string; dict: Dict; currency: string; products: Product[] }) {
   const { cart, remove, subtotal, prunedTitles, dismissPruned, syncCartWithCatalog } = useStore();
   const [code, setCode] = useState("");
   const [discount, setDiscount] = useState(0);
@@ -84,7 +84,7 @@ export default function CartClient({ locale, dict, currency }: { locale: string;
               <Cover
                 id={item.id}
                 title={item.title}
-                category={item.kind === "product" ? (PRODUCTS.find((p) => p.id === item.id)?.category ?? "ebooks") : "templates"}
+                category={item.kind === "product" ? (products.find((p) => p.id === item.id)?.category ?? "ebooks") : "templates"}
                 hue={item.hue}
                 size="sm"
               />
