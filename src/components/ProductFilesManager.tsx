@@ -1,8 +1,11 @@
 "use client";
 /**
- * Admin "Product files" manager: for each catalog product, presign → PUT
- * directly to S3 from the browser → confirm (server verifies the object
- * exists, then persists the binding). No file bytes pass through Next.js.
+ * Admin "Product files" manager: for each catalog product, the file is
+ * POSTed to this app's own /api/admin/files/upload route (same origin);
+ * the server PUTs it to S3 with a signed request, verifies the stored
+ * object, and persists the binding. (The earlier presign → direct-to-S3
+ * browser PUT depended on bucket CORS rules the storage provider's web
+ * console cannot fully express, so uploads go through the server now.)
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -75,29 +78,16 @@ export default function ProductFilesManager({
     const version = versionInputs.current[productId]?.value || undefined;
     setRows((r) => ({ ...r, [productId]: { ...r[productId], busy: true, message: undefined, isError: false } }));
     try {
-      // 1) presign
-      const pre = await fetch("/api/admin/files/presign", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId, filename: file.name, contentType: file.type, kind, sizeBytes: file.size }),
-      });
-      if (!pre.ok) {
-        const e = (await pre.json().catch(() => ({}))) as { error?: string };
-        throw new Error(e.error ?? `presign ${pre.status}`);
-      }
-      const { uploadUrl, fileKey } = (await pre.json()) as { uploadUrl: string; fileKey: string };
-      // 2) PUT straight to storage
-      const put = await fetch(uploadUrl, { method: "PUT", body: file });
-      if (!put.ok) throw new Error(`storage PUT ${put.status}`);
-      // 3) confirm + bind
-      const conf = await fetch("/api/admin/files/confirm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId, fileKey, kind, version }),
-      });
-      if (!conf.ok) {
-        const e = (await conf.json().catch(() => ({}))) as { error?: string };
-        throw new Error(e.error ?? `confirm ${conf.status}`);
+      // Single same-origin POST: the server stores the file in S3 and binds it.
+      const fd = new FormData();
+      fd.set("productId", productId);
+      fd.set("kind", kind);
+      if (version) fd.set("version", version);
+      fd.set("file", file);
+      const res = await fetch("/api/admin/files/upload", { method: "POST", body: fd });
+      if (!res.ok) {
+        const e = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(e.error ?? `upload ${res.status}`);
       }
       await loadBinding(productId);
       setRows((r) => ({ ...r, [productId]: { ...r[productId], busy: false, message: dict.done, isError: false } }));
