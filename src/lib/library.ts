@@ -35,17 +35,22 @@ export interface LibraryEntry {
   downloadUrl: string;
 }
 
-/** Pure builder — versionsByProduct maps productId → its version history. */
+/** Pure builder — versionsByProduct maps productId → its version history.
+ *  Product resolution: callers with the real (DB-first) catalog pass
+ *  `productsById` — office-created books exist only there, and the
+ *  seed-only lookup silently dropped them from buyers' libraries
+ *  (thermal fix). Without a map, the seed list is the fallback. */
 export function buildLibraryEntries(
   orders: LibraryOrderInput[],
   versionsByProduct: Map<string, ProductVersionRecord[]>,
   tokenFor: (productId: string, orderId: string) => string = (pid, oid) => createDownloadToken(pid, oid),
+  productsById?: ReadonlyMap<string, Product>,
 ): LibraryEntry[] {
   const entries: LibraryEntry[] = [];
   for (const order of orders) {
     if (order.status !== "paid" && order.status !== "fulfilled" && order.status !== "initiated") continue;
     for (const pid of new Set(order.productIds)) {
-      const product = getProductById(pid);
+      const product = productsById ? productsById.get(pid) : getProductById(pid);
       if (!product) continue;
       const history = versionsByProduct.get(pid) ?? [];
       const purchasedVersion = versionAt(history, order.createdAt);
@@ -98,14 +103,19 @@ export async function ordersForEmailDb(email: string): Promise<LibraryOrderInput
   }
 }
 
-/** Map the browser's local OrderRecords (existing account flow) to inputs. */
+/** Map the browser's local OrderRecords (existing account flow) to inputs.
+ *  Unknown ids are dropped — against the caller's catalog id set when
+ *  provided (the seed list alone used to eat every real book here),
+ *  else against the seed list. */
 export function localOrdersToInputs(
   records: { orderId: string; createdAt: string; status: string; items: { id: string; productIds?: string[] }[] }[],
+  knownProductIds?: ReadonlySet<string>,
 ): LibraryOrderInput[] {
+  const known = (id: string) => (knownProductIds ? knownProductIds.has(id) : Boolean(getProductById(id)));
   return records.map((r) => ({
     orderId: r.orderId,
     createdAt: r.createdAt,
     status: r.status === "paid" ? "paid" : "initiated",
-    productIds: r.items.flatMap((i) => i.productIds ?? [i.id]).filter((id) => Boolean(getProductById(id))),
+    productIds: r.items.flatMap((i) => i.productIds ?? [i.id]).filter(known),
   }));
 }
