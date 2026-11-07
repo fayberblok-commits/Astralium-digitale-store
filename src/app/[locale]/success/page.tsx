@@ -4,6 +4,7 @@ import { createRefToken, issueClaimCode } from "../../../lib/claim-codes";
 import { channelAvailability } from "../../../services/delivery";
 import DeliveryOptions, { type DeliveryLinks } from "../../../components/DeliveryOptions";
 import MarkPaid from "../../../components/MarkPaid";
+import SuccessPending from "../../../components/SuccessPending";
 import OrderAccess from "../../../components/OrderAccess";
 import { maskEmail } from "../../../lib/http";
 import AbBeacon from "../../../components/AbBeacon";
@@ -127,7 +128,7 @@ export default async function SuccessPage({
           {(await getFlag("ab_tests")) && <AbBeacon mode="conversion" />}
         </>
       ) : (
-        <p className="muted">{dict.success_pending}</p>
+        <SuccessPending note={dict.success_pending} checkLabel={dict.success_check_again} />
       )}
     </div>
   );
