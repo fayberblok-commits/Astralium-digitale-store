@@ -6,7 +6,7 @@ import { listFlashSales, resolveFlashPrices } from "../../../lib/flash-sales";
 import { getStorefrontProductById, getStorefrontProducts } from "../../../lib/catalog";
 import { resolveBundle } from "../../../lib/bundles";
 import { parseExpressId } from "../../../lib/express";
-import { paypalClientId } from "../../../lib/paypal";
+import { getPaypalClientToken, paypalClientId } from "../../../lib/paypal";
 import type { CartItem } from "../../../lib/store";
 import CheckoutClient from "../../../components/CheckoutClient";
 
@@ -50,6 +50,11 @@ export default async function CheckoutPage({
     stripeConfigured: Boolean(process.env.STRIPE_SECRET_KEY),
     paypalConfigured: Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET),
   };
+  // Card Fields client token (2026-11): PayPal only exposes
+  // paypal.CardFields when the SDK script carries this server-minted
+  // token. Minted here so the page ships it ready; ANY failure yields
+  // null and the SDK simply loads without it (Smart Buttons only).
+  const paypalClientToken = features.paypalConfigured ? await getPaypalClientToken() : null;
   // Express intent (owner fix, 2026-11): BUY NOW routes here with
   // ?express=<id>; the checkout then contains ONLY that item and the
   // cart is never read into it. Resolved with the SAME catalog/bundle
@@ -93,6 +98,7 @@ export default async function CheckoutPage({
         features={features}
         flashPrices={flashPrices}
         paypalClientId={features.paypalConfigured ? paypalClientId() : null}
+        paypalClientToken={paypalClientToken}
         expressItem={expressItem}
       />
     </>
