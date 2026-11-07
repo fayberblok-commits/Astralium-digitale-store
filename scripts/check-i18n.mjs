@@ -21,6 +21,8 @@ const NEW_KEYS = [
   // mobile-nav support entry.
   "success_congrats", "checkout_email_label", "checkout_email_hint",
   "pay_or_card", "pay_card_name", "pay_by_card_btn", "pay_error",
+  // Speed fix (register item 81): branded payment-area loading state.
+  "pay_preparing",
   // Promo trio on product pages (2026-11-07).
   "promo_t", "promo_c1", "promo_c2", "promo_c3",
   "pay_redirect_fallback", "hero_browse_books", "chat_fab_label", "nav_support",
