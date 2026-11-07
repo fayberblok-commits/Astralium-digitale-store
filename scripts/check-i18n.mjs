@@ -21,6 +21,8 @@ const NEW_KEYS = [
   // mobile-nav support entry.
   "success_congrats", "checkout_email_label", "checkout_email_hint",
   "pay_or_card", "pay_card_name", "pay_by_card_btn", "pay_error",
+  // Promo trio on product pages (2026-11-07).
+  "promo_t", "promo_c1", "promo_c2", "promo_c3",
   "pay_redirect_fallback", "hero_browse_books", "chat_fab_label", "nav_support",
   "admin_security_title", "admin_security_desc", "admin_security_events", "admin_security_empty", "admin_security_epoch", "admin_security_totp_title", "admin_security_totp_on", "admin_security_totp_off", "admin_security_totp_begin", "admin_security_totp_secret", "admin_security_totp_code", "admin_security_totp_confirm", "admin_security_totp_backup", "admin_security_totp_disable", "admin_security_stepup", "admin_security_stepup_done", "admin_security_terminate", "admin_security_terminate_done", "admin_security_locked", "admin_security_password",
   "admin_files_title", "admin_files_desc", "admin_files_product", "admin_files_status",
