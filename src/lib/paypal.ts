@@ -54,6 +54,30 @@ export async function getPaypalAccessToken(): Promise<string | null> {
   }
 }
 
+/**
+ * Client token for the JS SDK's hosted Card Fields: PayPal only
+ * exposes `paypal.CardFields` when the SDK script carries a
+ * `data-client-token` minted server-side with the merchant OAuth
+ * token. Without it the card section silently never renders (Smart
+ * Buttons are unaffected). Null on ANY failure — callers load the
+ * SDK without the token and degrade to Buttons only.
+ */
+export async function getPaypalClientToken(): Promise<string | null> {
+  const accessToken = await getPaypalAccessToken();
+  if (!accessToken) return null;
+  try {
+    const res = await fetch(`${paypalBase()}/v1/identity/generate-token`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { client_token?: string };
+    return data.client_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export interface PaypalOrderBodyInput {
   /** Store order id (AST-…). */
   orderId: string;
