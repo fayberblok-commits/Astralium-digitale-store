@@ -17,7 +17,6 @@
  * the signed download links.
  */
 import { createDownloadToken } from "./tokens.ts";
-import { getProductById } from "../data/products.ts";
 import { sendEmail, receiptEmailHtml } from "../services/email.ts";
 import { markPaidAndGrant, setOrderEmailIfEmpty, type OrderRecord } from "./orders.ts";
 // siteUrl comes from lib/server.ts, which imports next/headers — it is
@@ -205,8 +204,17 @@ export async function fulfilPaypalOrder(
   if (ledger.duplicate) return;
   const { siteUrl } = await import("./server.ts");
   const grantTokens = new Map(ledger.grants.map((g) => [g.productId, g.token]));
+  // Titles resolve from the real catalog (DB-first, all products —
+  // a just-bought item must resolve even if later deactivated).
+  // Loaded lazily like lib/server above so this module stays
+  // importable in plain node contexts. Resolving against the static
+  // seed list alone silently dropped office-created products from
+  // the receipt email — a paid order could arrive with no links.
+  const { listAdminProducts } = await import("./catalog.ts");
+  const { products: catalogAll } = await listAdminProducts();
+  const catalogById = new Map(catalogAll.map((p) => [p.id, p]));
   const links = effective.items
-    .map((item) => getProductById(item.productId))
+    .map((item) => catalogById.get(item.productId))
     .filter((p): p is NonNullable<typeof p> => Boolean(p))
     .map((p) => ({
       title: p.title,
