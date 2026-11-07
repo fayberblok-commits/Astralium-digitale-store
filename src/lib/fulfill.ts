@@ -6,7 +6,7 @@
 import { createDownloadToken } from "./tokens";
 import { STRIPE_API_VERSION } from "./stripe";
 import { listAdminProducts } from "./catalog";
-import { getOrderByRef } from "./orders";
+import { findOrder, getOrderByRef, grantTokensForOrder } from "./orders";
 
 export interface VerifiedOrder {
   orderId: string;
@@ -76,16 +76,38 @@ export async function verifyPaypalOrder(providerOrderId: string): Promise<Verifi
  * buyer keeps access to what they paid for). Resolving against the
  * static seed list alone silently dropped office-created products:
  * the success page showed a paid buyer NO download links.
+ *
+ * Delivery-audit finding 74: the URLs are the order's ledger GRANT
+ * tokens (grantTokensForOrder) — counted, capped and revocable on
+ * refund/dispute. The previous implementation minted a fresh
+ * grant-less token on every page view, which bypassed the grant
+ * layer entirely (a refunded buyer kept downloading for 7 days).
+ * When the ledger holds the order in any non-paid state, NO links
+ * are issued. The stateless-token fallback remains only for a
+ * provider-verified order the ledger has never seen (a Stripe
+ * session whose webhook has not landed yet — dormant, Stripe is
+ * not configured on this store).
  */
 export async function downloadLinksFor(order: VerifiedOrder): Promise<{ productId: string; title: string; url: string }[]> {
   const { products } = await listAdminProducts();
   const byId = new Map(products.map((p) => [p.id, p]));
-  return order.productIds
-    .map((pid) => byId.get(pid))
-    .filter((p): p is NonNullable<typeof p> => Boolean(p))
-    .map((p) => ({
-      productId: p.id,
-      title: p.title,
-      url: `/api/download/${createDownloadToken(p.id, order.orderId)}`,
-    }));
+  const ledger = await findOrder(order.orderId).catch(() => null);
+  const grantTokens =
+    ledger && (ledger.status === "paid" || ledger.status === "fulfilled")
+      ? await grantTokensForOrder(ledger)
+      : null;
+  const links: { productId: string; title: string; url: string }[] = [];
+  for (const pid of order.productIds) {
+    const p = byId.get(pid);
+    if (!p) continue;
+    if (ledger) {
+      // Ledger-known order: grant tokens or nothing.
+      const token = grantTokens?.get(pid);
+      if (!token) continue;
+      links.push({ productId: p.id, title: p.title, url: `/api/download/${token}` });
+    } else {
+      links.push({ productId: p.id, title: p.title, url: `/api/download/${createDownloadToken(p.id, order.orderId)}` });
+    }
+  }
+  return links;
 }
