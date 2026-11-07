@@ -705,6 +705,7 @@ export default function CheckoutClient({
           <div key={i.id} className="summary-row sum-item">
             <span className="sum-thumb" aria-hidden="true">
               <Cover
+                id={i.id}
                 title={i.title}
                 category={i.kind === "product" ? (getProductById(i.id)?.category ?? "ebooks") : "templates"}
                 hue={i.hue}
