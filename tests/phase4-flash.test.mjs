@@ -70,18 +70,19 @@ test("overlapping campaigns: deepest discount wins", () => {
 });
 
 test("sanitize: inverted window or unknown products rejected; cap floored at 1", () => {
+  const knownFixture = (id) => Boolean(getProductById(id));
   assert.equal(flash.sanitizeFlashSaleInput({
     name: "x", productIds: ["p01"], discountPercent: 20,
     startsAt: "2026-10-31T00:00:00.000Z", endsAt: "2026-10-30T00:00:00.000Z",
-  }), null);
+  }, knownFixture), null);
   assert.equal(flash.sanitizeFlashSaleInput({
     name: "x", productIds: ["nope"], discountPercent: 20,
     startsAt: "2026-10-30T00:00:00.000Z", endsAt: "2026-10-31T00:00:00.000Z",
-  }), null);
+  }, knownFixture), null);
   const ok = flash.sanitizeFlashSaleInput({
     name: "x", productIds: ["p01", "p01", "nope"], discountPercent: 20, quantityCap: 0,
     startsAt: "2026-10-30T00:00:00.000Z", endsAt: "2026-10-31T00:00:00.000Z",
-  });
+  }, knownFixture);
   assert.deepEqual(ok.productIds, ["p01"]);
   assert.equal(ok.quantityCap, 1);
 });
