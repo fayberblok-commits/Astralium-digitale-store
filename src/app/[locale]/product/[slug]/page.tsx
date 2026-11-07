@@ -295,7 +295,7 @@ export default async function ProductPage({
           both live in the buy panel above. */}
       <div className="sticky-buybar">
         <span className="sb-thumb" aria-hidden="true">
-          <Cover title={product.title} category={product.category} hue={product.hue} size="sm" />
+          <Cover title={product.title} category={product.category} hue={product.hue} size="sm" id={product.id} />
         </span>
         <span className="sb-meta">
           <span className="sb-title">{product.title}</span>
