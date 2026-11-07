@@ -7,17 +7,21 @@
  */
 import { useState } from "react";
 import type { Dict } from "../i18n/dictionaries";
-import { PRODUCTS } from "../data/products";
+import type { Product } from "../data/products";
 import { encodeShareItems } from "../lib/share";
 
 export default function WishlistExtras({
   locale,
   dict,
   wishlistSlugs,
+  products,
 }: {
   locale: string;
   dict: Dict;
   wishlistSlugs: string[];
+  /** The live storefront catalog (from the account page): slugs and
+   *  alert registrations resolve against it only (item 82 fix). */
+  products: Product[];
 }) {
   const [copied, setCopied] = useState(false);
   const [email, setEmail] = useState("");
@@ -25,7 +29,7 @@ export default function WishlistExtras({
   const [alertsMsg, setAlertsMsg] = useState<"ok" | "off" | "bad" | null>(null);
 
   if (wishlistSlugs.length === 0) return null;
-  const shareUrl = `/${locale}/wishlist/shared?items=${encodeURIComponent(encodeShareItems(wishlistSlugs))}`;
+  const shareUrl = `/${locale}/wishlist/shared?items=${encodeURIComponent(encodeShareItems(wishlistSlugs, products))}`;
 
   async function copyShare() {
     try {
@@ -40,7 +44,7 @@ export default function WishlistExtras({
       let anyOk = false;
       let disabled = false;
       for (const slug of wishlistSlugs) {
-        const product = PRODUCTS.find((p) => p.slug === slug);
+        const product = products.find((p) => p.slug === slug);
         if (!product) continue;
         const res = await fetch("/api/wishlist/alerts", {
           method: "POST",
