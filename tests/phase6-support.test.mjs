@@ -65,11 +65,11 @@ test("order intent: id + email are extracted from free text (en + ar)", () => {
 
 test("product tools answer from the real catalog only", () => {
   const p = PRODUCTS[0];
-  const details = tools.productDetails(p.slug);
+  const details = tools.productDetails(p.slug, PRODUCTS);
   assert.equal(details.title, p.title);
   assert.equal(details.priceUSD, p.priceUSD);
-  assert.equal(tools.productDetails("no-such-product"), null);
-  const found = tools.productSearch("AI Profit Blueprint");
+  assert.equal(tools.productDetails("no-such-product", PRODUCTS), null);
+  const found = tools.productSearch("AI Profit Blueprint", 3, PRODUCTS);
   assert.ok(found.some((x) => x.slug === p.slug));
 });
 
