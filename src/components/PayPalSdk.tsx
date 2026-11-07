@@ -52,8 +52,13 @@ declare global {
 
 const sdkLoads = new Map<string, Promise<PaypalNamespace>>();
 
-function loadPaypalSdk(clientId: string): Promise<PaypalNamespace> {
-  const existing = sdkLoads.get(clientId);
+function loadPaypalSdk(clientId: string, clientToken?: string | null): Promise<PaypalNamespace> {
+  // Card Fields need the server-minted client token ON the script tag
+  // (data-client-token); without it paypal.CardFields stays undefined.
+  // The token is part of the cache key so a tokenised load never
+  // reuses a token-less one (or vice versa).
+  const cacheKey = clientToken ? `${clientId}#${clientToken}` : clientId;
+  const existing = sdkLoads.get(cacheKey);
   if (existing) return existing;
   const promise = new Promise<PaypalNamespace>((resolve, reject) => {
     if (window.paypal?.Buttons) {
@@ -64,6 +69,7 @@ function loadPaypalSdk(clientId: string): Promise<PaypalNamespace> {
     script.src =
       `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}` +
       `&components=buttons,card-fields&currency=USD&intent=capture`;
+    if (clientToken) script.setAttribute("data-client-token", clientToken);
     script.async = true;
     script.onload = () => {
       if (window.paypal?.Buttons) resolve(window.paypal);
@@ -73,8 +79,8 @@ function loadPaypalSdk(clientId: string): Promise<PaypalNamespace> {
     document.head.appendChild(script);
   });
   // A failed load must not poison later attempts (e.g. transient network).
-  promise.catch(() => sdkLoads.delete(clientId));
-  sdkLoads.set(clientId, promise);
+  promise.catch(() => sdkLoads.delete(cacheKey));
+  sdkLoads.set(cacheKey, promise);
   return promise;
 }
 
@@ -88,12 +94,15 @@ export interface PayPalSdkLabels {
 
 export default function PayPalSdk({
   clientId,
+  clientToken,
   labels,
   createOrder,
   captureOrder,
   onError,
 }: {
   clientId: string;
+  /** Server-minted token enabling Card Fields; absent → Buttons only. */
+  clientToken?: string | null;
   labels: PayPalSdkLabels;
   /** Creates the order server-side; resolves to the PayPal order id. */
   createOrder: () => Promise<string>;
@@ -124,7 +133,7 @@ export default function PayPalSdk({
   useEffect(() => {
     let cancelled = false;
     let buttons: PaypalButtonsInstance | null = null;
-    loadPaypalSdk(clientId)
+    loadPaypalSdk(clientId, clientToken)
       .then(async (paypal) => {
         if (cancelled) return;
         const shared = {
@@ -170,9 +179,9 @@ export default function PayPalSdk({
         buttons?.close();
       } catch { /* already gone */ }
     };
-    // The SDK widgets are created once per clientId; later checkout
-    // state is always read through the callbacks ref above.
-  }, [clientId, errorLabel, buttonsId, nameId, numberId, expiryId, cvvId]);
+    // The SDK widgets are created once per clientId (+token); later
+    // checkout state is always read through the callbacks ref above.
+  }, [clientId, clientToken, errorLabel, buttonsId, nameId, numberId, expiryId, cvvId]);
 
   if (failed) return null;
 
