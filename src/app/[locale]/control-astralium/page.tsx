@@ -113,6 +113,7 @@ export default async function AdminDashboard({ params }: { params: Promise<{ loc
             countries: dict.office_countries, devices: dict.office_devices, browsers: dict.office_browsers,
             sources: dict.office_sources, topPages: dict.office_top_pages, funnel: dict.office_funnel,
             conversion: dict.office_conversion,
+            guards: dict.office_guards, guardsNote: dict.office_guards_note, lastCheck: dict.office_last_check,
             funnelSteps: [dict.office_f_visit, dict.office_f_product, dict.office_f_cart, dict.office_f_checkout, dict.office_f_purchase],
           }}
         />
@@ -142,6 +143,7 @@ export default async function AdminDashboard({ params }: { params: Promise<{ loc
               views: dict.admin_analytics_views,
               events: dict.admin_analytics_events,
               visitors: dict.admin_analytics_visitors,
+              guards: dict.admin_analytics_guards,
             }}
           />
         </div>
