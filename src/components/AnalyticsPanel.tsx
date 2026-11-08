@@ -13,7 +13,11 @@ interface DayCounts {
 }
 interface FunnelStep { type: string; count: number; conversionFromPrevious: number | null }
 interface TopProduct { productId: string; views: number; carts: number; purchases: number }
-interface Data { series: DayCounts[]; funnel: FunnelStep[]; topProducts: TopProduct[]; totalEvents: number }
+interface GuardRange { pageviews: number; events: number; visitors: number; productViews: number; purchases: number }
+interface Data {
+  series: DayCounts[]; funnel: FunnelStep[]; topProducts: TopProduct[]; totalEvents: number;
+  guards: { today: GuardRange; month: GuardRange; lastAt: string | null };
+}
 
 interface AnalyticsDict {
   empty: string;
@@ -23,6 +27,7 @@ interface AnalyticsDict {
   views: string;
   events: string;
   visitors: string;
+  guards: string;
 }
 
 function points(values: number[], width: number, height: number, pad = 6): string {
@@ -53,6 +58,10 @@ export default function AnalyticsPanel({ dict }: { dict: AnalyticsDict }) {
         <div className="stat-card"><span className="muted">{dict.visitors} (30d)</span><strong>{totalVisitors}</strong></div>
         <div className="stat-card"><span className="muted">{dict.views} (30d)</span><strong>{data.series.reduce((s, d) => s + d.pageview, 0)}</strong></div>
       </div>
+      <p className="muted">
+        {dict.guards}: {data.guards.today.visitors} / {data.guards.month.visitors}
+        {data.guards.lastAt ? ` · ${new Date(data.guards.lastAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+      </p>
       <p>
         {/* Plain <a> on purpose: this is a CSV file download from an API
             route, not a page navigation — next/link would be wrong here. */}
