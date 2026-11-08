@@ -86,7 +86,14 @@ export async function generateMetadata({
   };
 }
 
-const THEME_SCRIPT = `(function(){var d=document.documentElement;d.classList.add('js');try{var t=localStorage.getItem('astralium-theme');if(!t){var dm=d.dataset.defaultMode;if(dm==='light'||dm==='dark'){t=dm;}else{t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}}d.dataset.theme=t;}catch(e){d.dataset.theme='dark';}})();`;
+// First-paint theme (no flash): the visitor's own toggle choice
+// (localStorage `astralium-theme`) wins; otherwise the owner's
+// configured default mode applies when it names one explicitly.
+// Dark is the store's official mode (owner's standing rule,
+// 2026-11-08): with no stored choice and no explicit owner default,
+// the store opens dark — the OS `prefers-color-scheme` never flips
+// a first visit to light.
+const THEME_SCRIPT = `(function(){var d=document.documentElement;d.classList.add('js');try{var t=localStorage.getItem('astralium-theme');if(!t){var dm=d.dataset.defaultMode;if(dm==='light'||dm==='dark'){t=dm;}else{t='dark';}}d.dataset.theme=t;}catch(e){d.dataset.theme='dark';}})();`;
 
 export default async function LocaleLayout({
   children,
