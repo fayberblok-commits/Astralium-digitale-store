@@ -128,3 +128,26 @@ test("retention prune: old days removed, recent kept", async () => {
   const remaining = await an.listAnalyticsEvents();
   assert.ok(remaining.every((e) => e.day >= an.utcDay(new Date(now.getTime() - 30 * 24 * 3600 * 1000))));
 });
+
+test("guard split: bot-device events separate, legacy null-device rows stay human", () => {
+  const ev = (device, createdAt) => ({
+    id: createdAt, type: "pageview", productId: null, path: "/en", country: null,
+    visitorHash: `h-${createdAt}`, device, browser: "Other", source: "direct",
+    day: "2026-11-08", createdAt,
+  });
+  const events = [
+    ev("bot", "2026-11-08T10:00:00.000Z"),
+    ev("mobile", "2026-11-08T11:00:00.000Z"),
+    ev(null, "2026-11-08T12:00:00.000Z"),
+    ev("bot", "2026-11-08T13:00:00.000Z"),
+    ev("desktop", "2026-11-08T14:00:00.000Z"),
+  ];
+  const { human, guard } = an.splitTraffic(events);
+  assert.equal(guard.length, 2);
+  assert.equal(human.length, 3);
+  assert.ok(guard.every((e) => an.isGuardEvent(e)));
+  assert.equal(an.lastGuardAt(guard), "2026-11-08T13:00:00.000Z");
+  assert.equal(an.lastGuardAt([]), null);
+  // Headless guard renders classify as bot at capture time.
+  assert.equal(an.parseUserAgent("Mozilla/5.0 HeadlessChrome/120.0").device, "bot");
+});
