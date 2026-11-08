@@ -151,3 +151,20 @@ test("guard split: bot-device events separate, legacy null-device rows stay huma
   // Headless guard renders classify as bot at capture time.
   assert.equal(an.parseUserAgent("Mozilla/5.0 HeadlessChrome/120.0").device, "bot");
 });
+
+test("office paths are staff traffic: detected, filtered, never visitors", () => {
+  assert.equal(an.isOfficePath("/en/control-astralium"), true);
+  assert.equal(an.isOfficePath("/ar/control-astralium/login"), true);
+  assert.equal(an.isOfficePath("control-astralium"), true);
+  assert.equal(an.isOfficePath("/en"), false);
+  assert.equal(an.isOfficePath("/en/shop"), false);
+  assert.equal(an.isOfficePath("/en/checkout"), false);
+  assert.equal(an.isOfficePath(null), false);
+  const ev = (path) => ({
+    id: path, type: "pageview", productId: null, path, country: null,
+    visitorHash: "h", device: "mobile", browser: "Chrome", source: "direct",
+    day: "2026-11-08", createdAt: "2026-11-08T10:00:00.000Z",
+  });
+  const kept = an.visitorTraffic([ev("/en"), ev("/en/control-astralium"), ev("/en/product/x")]);
+  assert.deepEqual(kept.map((e) => e.path), ["/en", "/en/product/x"]);
+});
