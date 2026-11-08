@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  analyticsCsv, dailySeries, funnel, lastGuardAt, listAnalyticsEvents, rangeStats, splitTraffic, topProducts, utcDay,
+  analyticsCsv, dailySeries, funnel, lastGuardAt, listAnalyticsEvents, rangeStats, splitTraffic, topProducts, utcDay, visitorTraffic,
 } from "../../../../lib/analytics";
 import { requireAdmin } from "../../../../lib/team";
 
@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
   const allEvents = await listAnalyticsEvents({ sinceDay });
   // Visitor counters exclude guard/system check traffic (owner's order
   // 2026-11-08); guards are totalled separately below.
-  const { human: events, guard } = splitTraffic(allEvents);
+  const { human: events, guard } = splitTraffic(visitorTraffic(allEvents));
   const series = dailySeries(events, days);
   if (req.nextUrl.searchParams.get("format") === "csv") {
     return new NextResponse(analyticsCsv(series), {
