@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "../../../../../lib/team";
 import {
-  activeVisitors, dimensionCounts, funnel, listAnalyticsEvents, rangeStats, topPages, utcDay,
+  activeVisitors, dimensionCounts, funnel, lastGuardAt, listAnalyticsEvents, rangeStats, splitTraffic, topPages, utcDay,
 } from "../../../../../lib/analytics";
 
 export const runtime = "nodejs";
@@ -24,7 +24,14 @@ export async function GET(req: NextRequest) {
   const today = utcDay(now);
   const dayAgo = (n: number) => utcDay(new Date(now.getTime() - n * 24 * 3600 * 1000));
   const sinceDay = dayAgo(30);
-  const events = await listAnalyticsEvents({ sinceDay });
+  const allEvents = await listAnalyticsEvents({ sinceDay });
+
+  // Owner's order 2026-11-08: visitor counters count REAL visitors
+  // only. Guard/system check traffic (device === "bot" at capture) is
+  // reported separately under `guards` and never inflates the funnel,
+  // the map, or the visitor numbers.
+  const { human, guard } = splitTraffic(allEvents);
+  const events = human;
 
   const last30 = events; // listAnalyticsEvents is already scoped to >= sinceDay
   const purchases = last30.filter((e) => e.type === "purchase").length;
@@ -33,6 +40,11 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     generatedAt: now.toISOString(),
     activeNow: activeVisitors(events, 5, now).visitors,
+    guards: {
+      today: rangeStats(guard, today, today),
+      month: rangeStats(guard, dayAgo(29), today),
+      lastAt: lastGuardAt(guard),
+    },
     ranges: {
       today: rangeStats(events, today, today),
       week: rangeStats(events, dayAgo(6), today),
