@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  analyticsCsv, dailySeries, funnel, listAnalyticsEvents, topProducts, utcDay,
+  analyticsCsv, dailySeries, funnel, lastGuardAt, listAnalyticsEvents, rangeStats, splitTraffic, topProducts, utcDay,
 } from "../../../../lib/analytics";
 import { requireAdmin } from "../../../../lib/team";
 
@@ -17,7 +17,10 @@ export async function GET(req: NextRequest) {
   if ("error" in auth) return auth.error;
   const days = 30;
   const sinceDay = utcDay(new Date(Date.now() - (days - 1) * 24 * 3600 * 1000));
-  const events = await listAnalyticsEvents({ sinceDay });
+  const allEvents = await listAnalyticsEvents({ sinceDay });
+  // Visitor counters exclude guard/system check traffic (owner's order
+  // 2026-11-08); guards are totalled separately below.
+  const { human: events, guard } = splitTraffic(allEvents);
   const series = dailySeries(events, days);
   if (req.nextUrl.searchParams.get("format") === "csv") {
     return new NextResponse(analyticsCsv(series), {
@@ -27,11 +30,17 @@ export async function GET(req: NextRequest) {
       },
     });
   }
+  const today = utcDay(new Date());
   return NextResponse.json({
     days,
     series,
     funnel: funnel(events),
     topProducts: topProducts(events, 10),
     totalEvents: events.length,
+    guards: {
+      today: rangeStats(guard, today, today),
+      month: rangeStats(guard, sinceDay, today),
+      lastAt: lastGuardAt(guard),
+    },
   });
 }
