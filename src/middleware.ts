@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { LOCALE_CODES, isLocale, matchLocale } from "./i18n/locales";
+import { DEFAULT_LOCALE, LOCALE_CODES, isLocale } from "./i18n/locales";
 
 /**
  * Edge middleware — three jobs:
  *
- * 1. Locale prefixing (unchanged behaviour): unprefixed page paths
- *    redirect to /{locale}… from cookie/Accept-Language.
+ * 1. Locale prefixing: unprefixed page paths redirect to /{locale}…
+ *    The visitor's explicitly chosen language (the `astralium-locale`
+ *    cookie, set by the header language switcher) is honoured;
+ *    everyone else lands on English first — the owner's standing rule
+ *    (2026-11-08): English is the first language every customer sees,
+ *    regardless of Accept-Language or IP, and they may switch after.
  *
  * 2. Strict CSP with a per-request nonce (Phase 1 upgrade, §2). The
  *    nonce travels in the `x-nonce` request header (server components
@@ -121,10 +125,12 @@ export function middleware(req: NextRequest) {
   }
 
   const cookieLocale = req.cookies.get("astralium-locale")?.value;
+  // English first (owner's standing rule, 2026-11-08): only an
+  // explicitly chosen language (cookie from the switcher) diverts a
+  // first visit from the English default — the browser's
+  // Accept-Language no longer picks the landing locale.
   const locale =
-    cookieLocale && isLocale(cookieLocale)
-      ? cookieLocale
-      : matchLocale(req.headers.get("accept-language"));
+    cookieLocale && isLocale(cookieLocale) ? cookieLocale : DEFAULT_LOCALE;
 
   const url = req.nextUrl.clone();
   url.pathname = `/${locale}${pathname === "/" ? "" : pathname}`;
