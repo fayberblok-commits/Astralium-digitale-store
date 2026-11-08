@@ -344,3 +344,4 @@ production database (e.g. from a local shell with the production
 Priorities honoured: (1) checkout + instant delivery, (2) luxury
 design/UX, (3) 40-language reach with full RTL, (4) owner control,
 (5) performance, security headers, SEO.
+
