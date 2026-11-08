@@ -400,6 +400,23 @@ export function splitTraffic(events: AnalyticsEventRecord[]): { human: Analytics
   return { human, guard };
 }
 
+/**
+ * Office paths are staff traffic, never visitors (found live 2026-11-08):
+ * the beacon also fires inside /[locale]/control-astralium, so the
+ * owner's own office browsing — and any staff session — would otherwise
+ * inflate the visitor counters and the top-pages list. Such events are
+ * excluded from every office aggregate, and the capture route drops
+ * them at the door.
+ */
+export function isOfficePath(path: string | null): boolean {
+  return !!path && /(^|\/)control-astralium(\/|$)/.test(path);
+}
+
+/** Events that count as store traffic at all (office paths removed). */
+export function visitorTraffic(events: AnalyticsEventRecord[]): AnalyticsEventRecord[] {
+  return events.filter((e) => !isOfficePath(e.path));
+}
+
 /** Most recent guard event instant (ISO), or null when there is none. */
 export function lastGuardAt(guard: AnalyticsEventRecord[]): string | null {
   let last: string | null = null;
