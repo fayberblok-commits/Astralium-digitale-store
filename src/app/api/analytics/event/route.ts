@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFlag } from "../../../../lib/flags";
 import {
   analyticsDeniedByConsent, countryFromHeaders, hashPersistentVisitor, hashVisitor,
-  isAnalyticsType, parseUserAgent, recordAnalyticsEvent, trafficSource,
+  isAnalyticsType, isOfficePath, parseUserAgent, recordAnalyticsEvent, trafficSource,
 } from "../../../../lib/analytics";
 import { httpErrorResponse, readJsonBody, getClientIp } from "../../../../lib/http";
 
@@ -32,6 +32,11 @@ export async function POST(req: NextRequest) {
   if (!body || !isAnalyticsType(body.type)) {
     return NextResponse.json({ error: "INVALID_EVENT" }, { status: 400 });
   }
+  const eventPath = typeof body.path === "string" ? body.path : null;
+  if (isOfficePath(eventPath)) {
+    // Staff surface: the Manager's Office is not store traffic.
+    return NextResponse.json({ ok: true, stored: false, reason: "OFFICE_PATH" });
+  }
   const ip = getClientIp(req);
   let visitorHash = hashVisitor(ip, req.headers.get("user-agent"));
   if (typeof body.vid === "string" && body.vid.length >= 8 && body.vidConsent === true) {
@@ -41,7 +46,7 @@ export async function POST(req: NextRequest) {
   await recordAnalyticsEvent({
     type: body.type,
     productId: typeof body.productId === "string" ? body.productId : null,
-    path: typeof body.path === "string" ? body.path : null,
+    path: eventPath,
     country: countryFromHeaders((n) => req.headers.get(n)),
     visitorHash,
     device: ua.device,
