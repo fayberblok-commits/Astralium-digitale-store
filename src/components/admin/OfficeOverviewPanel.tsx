@@ -12,12 +12,14 @@ export interface OverviewDict {
   loading: string; empty: string; now: string; today: string; week: string; month: string;
   visitors: string; uniques: string; views: string; countries: string; devices: string;
   browsers: string; sources: string; topPages: string; funnel: string; conversion: string;
+  guards: string; guardsNote: string; lastCheck: string;
   funnelSteps: string[];
 }
 
 interface RangeStats { pageviews: number; events: number; visitors: number; productViews: number; purchases: number }
 interface OverviewData {
   activeNow: number;
+  guards: { today: RangeStats; month: RangeStats; lastAt: string | null };
   ranges: { today: RangeStats; week: RangeStats; month: RangeStats };
   countries: { key: string; count: number }[];
   devices: { key: string; count: number }[];
@@ -84,6 +86,14 @@ export default function OfficeOverviewPanel({ dict }: { dict: OverviewDict }) {
           </div>
         ))}
         <div className="stat-card"><span className="muted">{dict.conversion}</span><strong>{data.conversionRate}%</strong></div>
+        <div className="stat-card">
+          <span className="muted">{dict.guards} · {dict.today}</span>
+          <strong>{data.guards.today.visitors}</strong>
+          <span className="muted">
+            {dict.guardsNote}
+            {data.guards.lastAt ? ` · ${dict.lastCheck} ${new Date(data.guards.lastAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+          </span>
+        </div>
       </div>
 
       {data.totalEvents30d === 0 ? (
