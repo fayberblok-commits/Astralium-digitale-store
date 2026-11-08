@@ -97,6 +97,13 @@ export default function CheckoutClient({
   const [provider, setProvider] = useState<"stripe" | "paypal">(
     features.stripeConfigured ? "stripe" : "paypal",
   );
+  // Busy ONLY while money is genuinely in motion: set inside
+  // startCheckout at order creation (always after an explicit buyer
+  // action) and cleared on create failure, on capture
+  // pending/unconfirmed, on SDK error, and on buyer cancel (the
+  // PayPalSdk onCancel below — the path that used to strand this
+  // flag forever, register item 84). SDK loading/mounting never
+  // sets it.
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // When a capture may have moved money (pending review, or captured
@@ -555,6 +562,19 @@ export default function CheckoutClient({
               createOrder={sdkCreateOrder}
               captureOrder={sdkCaptureOrder}
               onError={(message) => { setError(serverErrorRef.current ?? message); setBusy(false); }}
+              onCancel={() => {
+                // Buyer closed the PayPal popup / abandoned the card
+                // challenge without paying. Busy was set when the
+                // order was created; no navigation and no error
+                // follow a cancel, so THIS is what returns the
+                // checkout to idle — the gold button used to stay
+                // disabled on "PROCESSING…" forever (item 84). The
+                // stored server error is dropped too: the create
+                // succeeded, so it is stale, and a cancel shows no
+                // error.
+                serverErrorRef.current = null;
+                setBusy(false);
+              }}
             />
           )}
           {offered.length > 1 && (
