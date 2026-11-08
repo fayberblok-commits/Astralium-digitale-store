@@ -18,6 +18,9 @@ import {
  *                 server-side and returns the PayPal order id;
  *   onApprove   → POST /api/checkout/capture performs the capture
  *                 server-side and fulfils through the order ledger.
+ *   onCancel    → the parent restores its idle state: order creation
+ *                 set its busy flag, and cancel is the one outcome
+ *                 that neither navigates nor errors (item 84).
  *
  * Graceful degradation is a hard requirement:
  *  - SDK script fails to load / Buttons unavailable → this component
@@ -74,6 +77,7 @@ export default function PayPalSdk({
   createOrder,
   captureOrder,
   onError,
+  onCancel,
 }: {
   clientId: string;
   /** Server-minted token enabling Card Fields; absent → Buttons only. */
@@ -84,6 +88,12 @@ export default function PayPalSdk({
   /** Captures server-side; resolves after navigating to the success page. */
   captureOrder: (paypalOrderId: string) => Promise<void>;
   onError: (message: string) => void;
+  /** Buyer closed the PayPal flow WITHOUT paying (popup dismissed /
+   *  card challenge abandoned). Order creation marked the parent
+   *  checkout busy; this callback is the ONLY signal that returns it
+   *  to idle on the cancel path — without it the redirect button sat
+   *  disabled on "PROCESSING…" forever (register item 84). */
+  onCancel?: () => void;
 }) {
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   const buttonsId = `pp-buttons-${uid}`;
@@ -100,9 +110,9 @@ export default function PayPalSdk({
   // Always invoke the LATEST checkout state (email, coupon, gifts…)
   // without re-rendering the SDK widgets on every keystroke. The ref
   // is updated in an effect (never during render).
-  const callbacks = useRef({ createOrder, captureOrder, onError });
+  const callbacks = useRef({ createOrder, captureOrder, onError, onCancel });
   useEffect(() => {
-    callbacks.current = { createOrder, captureOrder, onError };
+    callbacks.current = { createOrder, captureOrder, onError, onCancel };
   });
   const errorLabel = labels.error;
 
@@ -124,7 +134,13 @@ export default function PayPalSdk({
             await callbacks.current.captureOrder(data.orderID);
           },
           onError: () => callbacks.current.onError(errorLabel),
-          onCancel: () => { /* buyer closed the flow — nothing to report */ },
+          // Buyer closed the popup / abandoned the card challenge:
+          // no error to show — but order creation set the parent's
+          // busy flag, and this is the only signal that clears it on
+          // the cancel path. It used to be a deliberate no-op, which
+          // stranded the gold redirect button disabled on
+          // "PROCESSING…" forever (register item 84).
+          onCancel: () => callbacks.current.onCancel?.(),
         };
         // Buttons and Card Fields are independent widgets: paint
         // them in PARALLEL instead of gating the card fields behind
