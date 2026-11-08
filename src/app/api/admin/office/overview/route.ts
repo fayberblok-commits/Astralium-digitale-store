@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "../../../../../lib/team";
 import {
-  activeVisitors, dimensionCounts, funnel, lastGuardAt, listAnalyticsEvents, rangeStats, splitTraffic, topPages, utcDay,
+  activeVisitors, dimensionCounts, funnel, lastGuardAt, listAnalyticsEvents, rangeStats, splitTraffic, topPages, utcDay, visitorTraffic,
 } from "../../../../../lib/analytics";
 
 export const runtime = "nodejs";
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   // only. Guard/system check traffic (device === "bot" at capture) is
   // reported separately under `guards` and never inflates the funnel,
   // the map, or the visitor numbers.
-  const { human, guard } = splitTraffic(allEvents);
+  const { human, guard } = splitTraffic(visitorTraffic(allEvents));
   const events = human;
 
   const last30 = events; // listAnalyticsEvents is already scoped to >= sinceDay
