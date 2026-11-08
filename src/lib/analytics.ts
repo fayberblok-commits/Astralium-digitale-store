@@ -380,6 +380,33 @@ export function rangeStats(events: AnalyticsEventRecord[], fromDay: string, toDa
   return stats;
 }
 
+/**
+ * Guard/system traffic split (owner's order 2026-11-08): events whose
+ * User-Agent was classified as a bot at capture time (device === "bot")
+ * are the store's own automated checks — the guards' rendered visits,
+ * crawlers, preview bots. The office must show them SEPARATELY so the
+ * owner never mistakes a guard's rounds for a real customer. Only a
+ * positive bot classification counts as guard traffic; legacy rows
+ * (device null) stay with the visitors.
+ */
+export function isGuardEvent(e: AnalyticsEventRecord): boolean {
+  return e.device === "bot";
+}
+
+export function splitTraffic(events: AnalyticsEventRecord[]): { human: AnalyticsEventRecord[]; guard: AnalyticsEventRecord[] } {
+  const human: AnalyticsEventRecord[] = [];
+  const guard: AnalyticsEventRecord[] = [];
+  for (const e of events) (isGuardEvent(e) ? guard : human).push(e);
+  return { human, guard };
+}
+
+/** Most recent guard event instant (ISO), or null when there is none. */
+export function lastGuardAt(guard: AnalyticsEventRecord[]): string | null {
+  let last: string | null = null;
+  for (const e of guard) if (last === null || e.createdAt > last) last = e.createdAt;
+  return last;
+}
+
 export interface TopPage { path: string; views: number; visitors: number }
 
 /** Most-viewed paths (pageview events only), ranked. */
